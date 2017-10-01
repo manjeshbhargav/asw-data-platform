@@ -22,3 +22,7 @@ yarn-error.log*
 
 # IntelliJ IDEA folder
 .idea
+
+# HTTPS Key and Cert
+*.crt
+*.key
