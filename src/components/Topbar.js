@@ -12,7 +12,7 @@ export default function Topbar(props) {
       <Nav>
         {props.links.map((link, i) => {
           return (
-            <NavItem eventKey={i} href={link.href}>
+            <NavItem eventKey={i} key={i} href={link.href}>
               {link.title}
             </NavItem>
           );

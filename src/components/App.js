@@ -1,6 +1,6 @@
 import React, { Component } from 'react';
 import { Col, Grid, Row } from 'react-bootstrap';
-import Signin from './Signin';
+import Signin, { Status } from './Signin';
 import Topbar from './Topbar';
 import './App.css';
 
@@ -14,14 +14,15 @@ class App extends Component {
               links={[
                 {title: 'About Us', href: '#'},
                 {title: 'Contact Us', href: '#'},
-              ]} />
+              ]}/>
           </Col>
         </Row>
         <Row className="show-grid">
           <Col xs={12} md={12}>
-            <Signin header="ASW Data Platform" />
+            <Signin header="ASW Data Platform"/>
           </Col>
         </Row>
+        <Status state={this.props.state}/>
       </Grid>
     );
   }
