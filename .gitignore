@@ -26,3 +26,6 @@ yarn-error.log*
 # HTTPS Key and Cert
 *.crt
 *.key
+
+# Google Cloud Service Account Key
+srvkey.json

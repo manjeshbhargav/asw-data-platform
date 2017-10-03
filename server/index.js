@@ -1,6 +1,7 @@
 const cookieParser = require('cookie-parser');
 const express = require('express');
 const fs = require('fs');
+const gcbucket = require('./gcbucket');
 const https = require('https');
 const passport = require('passport');
 const path = require('path');
@@ -69,8 +70,14 @@ app.get('/signin', passport.authenticate('google', {
 // Handle Google OAuth 2.0 server response.
 app.get('/signin/callback', passport.authenticate('google', {
   failureRedirect: '/?state=signinFailed'
-}), (request, response) => {
-  response.redirect(`${GOOG_STORAGE_URL}/mmalavalli-test-bucket`);
+}), async ({ user }, response) => {
+  const email = user.emails[0].value;
+  try {
+    const bucketName = await gcbucket(email);
+    response.redirect(`${GOOG_STORAGE_URL}/${bucketName}`);
+  } catch (e) {
+    response.redirect('/?state=bucketError');
+  }
 });
 
 // Create and run the HTTPS server.
