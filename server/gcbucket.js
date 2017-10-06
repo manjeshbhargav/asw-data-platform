@@ -1,8 +1,10 @@
+'use strict';
+
 const crypto = require('crypto');
 const Storage = require('@google-cloud/storage');
 const storage = Storage();
 
-const BUCKET_NAME_SALT = 'asw-bucket';
+const BUCKET_NAME_SALT = process.env.BUCKET_NAME_SALT || 'asw-bucket';
 
 /**
  * Ensures the presence of a Google Cloud Storage bucket for the given email.
@@ -16,7 +18,7 @@ async function gcbucket(email) {
     .digest('hex');
 
   // If the bucket already exists, return its name.
-  const bucket = storage.bucket(`${BUCKET_NAME_SALT}-${hash}`);
+  const bucket = storage.bucket(hash);
   const [ exists ] = await bucket.exists();
   if (exists) {
     return bucket.name;
@@ -28,8 +30,10 @@ async function gcbucket(email) {
   // Assign the given email to the role of the bucket's admin.
   const [ iamPolicy ] = await newBucket.iam.getPolicy();
   const members = [`user:${email}`];
-  const role = 'roles/storage.objectAdmin';
-  iamPolicy.bindings.push({ role, members });
+  const roleCreator = 'roles/storage.objectCreator';
+  const roleViewer = 'roles/storage.objectViewer';
+  iamPolicy.bindings.push({ role: roleCreator, members });
+  iamPolicy.bindings.push({ role: roleViewer, members });
   await newBucket.iam.setPolicy(iamPolicy);
 
   // Return the newly created bucket's name.

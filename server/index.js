@@ -1,3 +1,5 @@
+'use strict';
+
 const cookieParser = require('cookie-parser');
 const express = require('express');
 const fs = require('fs');
@@ -12,7 +14,7 @@ const GoogOAuth2Strategy = require('passport-google-oauth').OAuth2Strategy;
 const CERT = process.env.CERT || 'cert.crt';
 const DOMAIN = process.env.DOMAIN || 'localhost';
 const KEY = process.env.KEY || 'key.key';
-const PORT = parseInt(process.env.PORT || '8080');
+const PORT = parseInt(process.env.PORT || '8080', 10);
 
 // Google OAuth 2.0 constants.
 const GOOG_CLIENT_ID = process.env.GOOG_CLIENT_ID;
@@ -76,6 +78,7 @@ app.get('/signin/callback', passport.authenticate('google', {
     const bucketName = await gcbucket(email);
     response.redirect(`${GOOG_STORAGE_URL}/${bucketName}`);
   } catch (e) {
+    console.error(e);
     response.redirect('/?state=bucketError');
   }
 });
