@@ -12,8 +12,8 @@ class App extends Component {
           <Col xs={12} md={12}>
             <Topbar brand="ASW Data Platform"
               links={[
-                {title: 'About Us', href: '#'},
-                {title: 'Contact Us', href: '#'},
+                {title: 'About Us', href: 'https://www.edf.org/asw'},
+                {title: 'Contact Us', href: 'https://www.edf.org/content/connect-asw'},
               ]}/>
           </Col>
         </Row>

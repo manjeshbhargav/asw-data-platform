@@ -1,10 +1,13 @@
 'use strict';
 
+const PROJECT_ID = process.env.PROJECT_ID || 'asw-error-catchall-117';
+const BUCKET_NAME_SALT = process.env.BUCKET_NAME_SALT;
+
 const crypto = require('crypto');
 const Storage = require('@google-cloud/storage');
-const storage = Storage();
-
-const BUCKET_NAME_SALT = process.env.BUCKET_NAME_SALT || 'asw-bucket';
+const storage = new Storage({
+  projectId: PROJECT_ID
+});
 
 /**
  * Ensures the presence of a Google Cloud Storage bucket for the given email.
