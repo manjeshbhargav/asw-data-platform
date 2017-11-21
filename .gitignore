@@ -11,7 +11,11 @@ coverage
 # production
 build
 
+# environmental variables
+storage
+
 # misc
+.env
 .DS_Store
 .env.local
 .env.development.local

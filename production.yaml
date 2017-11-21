@@ -1,0 +1,20 @@
+# production.yaml 
+service: default
+runtime: nodejs
+env: flex
+
+# [START handlers]
+handlers:
+ - url: /
+   static_files: build/index.html
+   upload: build/index.html
+
+ - url: /(.*)
+   static_files: build/\1
+   upload: build/(.*)
+# [END handlers]
+
+skip_files:
+ - ^node_modules$
+ - ^ignore$
+ - ^.env$
