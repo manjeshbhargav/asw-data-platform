@@ -15,17 +15,14 @@ const storage = new Storage({
  * @returns {Promise<string>} The name of the bucket.
  */
 async function gcbucket(email) {
-  const hash = crypto
-    .createHash('md5')
-    .update(`${BUCKET_NAME_SALT}-${email}`)
-    .digest('hex');
+  const hash = getHash(email);
 
   // If the bucket already exists, return its name.
   const bucket = storage.bucket(hash);
   const [ exists ] = await bucket.exists();
   if (exists) {
     return bucket.name;
-  }
+  };
 
   // Create a new bucket.
   const [ newBucket ] = await bucket.create();
@@ -43,4 +40,15 @@ async function gcbucket(email) {
   return newBucket.name;
 }
 
-module.exports = gcbucket;
+function getHash(email) {
+  const hash = crypto
+    .createHash('md5')
+    .update(`${BUCKET_NAME_SALT}-${email}`)
+    .digest('hex');
+  return hash;
+}
+
+module.exports = {
+  gcbucket,
+  getHash
+};
