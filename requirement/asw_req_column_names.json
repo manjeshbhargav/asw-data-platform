@@ -1,0 +1,23 @@
+{
+  "And": [
+    {
+      "And": [
+        {"Takes": "measurement_timestamp_epoch"},
+        {"Takes": "measurement_latitude_degree_decimal"},
+        {"Takes": "measurement_longitude_degree_decimal"},
+        {"Takes": "measurand_name"},
+        {"Takes": "measured_value"},
+        {"Takes": "measurement_unit"},
+        {"Takes": "sampling_rate"},
+        {"Takes": "data_averaging_method"}
+      ]
+    },
+    {
+      "And": [
+        {"Takes": "sensor_mobility_type"},
+        {"Takes": "sensor_manufacturer"},
+        {"Takes": "sensor_model_name"}
+      ]
+    }
+  ]
+}
