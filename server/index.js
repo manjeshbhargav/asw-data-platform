@@ -19,11 +19,16 @@ const Strategy = require("passport-local");
 const db = require('../db');
 const jwt = require('jsonwebtoken');
 const expressJwt = require('express-jwt');
-const requirement = require('../requirement/requirement');
+const csvParser = require("csv-parser");
+const csvFast = require("fast-csv")
+const async = require('async');
+// const requirement = require('../requirement/requirement');
 
-var requiredHeaders = JSON.parse(
-  fs.readFileSync(path.join(`${__dirname}/../requirement/asw_req_column_names.json`), 'utf8'));
-var csv = require("csv-parser");
+// var requiredHeaders = JSON.parse(
+//   fs.readFileSync(path.join(`${__dirname}/../requirement/asw_req_column_names.json`), 'utf8'));
+var requiredHeaders = fs.readFileSync(
+    path.join(`${__dirname}/../requirement/asw_req_column_names.csv`), 'utf8'
+  ).split(',');
 
 // var requirement_dict;
 // var taken;
@@ -54,9 +59,13 @@ const JWT_SECRET = process.env.JWT_SECRET;
 const TOKEN_TIME = process.env.TOKEN_TIME || '9999h';
 const REQUEST_BODY_LIMIT = process.env.REQUEST_BODY_LIMIT || '16mb';
 const JWT_FILENAME = 'jwt';
+const PRIVATE_PREFIX = 'system';
 const DATA_PREFIX = 'data'; // 'Prefix by which to filter, e.g. public/';
 const ROLE_OBJECT_LISTER = 'projects/glowing-palace-179100/roles/storage.objectLister';
 const UPLOAD_SIZE_LIMIT = 10 * 1024 * 1024; // no larger than 10mb
+const DELIMITER = '\t';
+const REGEX_NUMERIC = /^[0-9]+$/;
+// const REGEX_ALPHANUMERIC = /^[0-9a-zA-Z]+$/;
 
 // HTTP(S) server constants.
 const DOMAIN = process.env.DOMAIN || 'localhost:8080';
@@ -171,33 +180,21 @@ var upload = multer({
 
 // Create protected route to upload tab-delimited txt file and check that it
 // meets header requirements
-app.post("/upload", authenticate, upload.single("file"), (req, res, next) => {
+app.post("/upload", authenticate, upload.single("file"),
+// (req, res, next) => {
+  async (req, res) => {
   var email = req.user.email;
+  // var email = req.user.email;
   var bucketName = gcb.getHash(email);
 
-  // Set up first portion of pipe (csvParser) to check headers
-  var csvParser = new csv({separator: '\t'});
-  csvParser.on('headers', function(headerList) {
-    var fulfilled = requirement.checkFulfilledCourses(requiredHeaders, headerList);
-    if (!fulfilled) {
-      console.error('Header not properly formatted.')
-      res.status(400).end(
-        'ERROR: Header does not contain valid set of column names: ' + headerList.join() + '\n'
-      );
-    } else {
-      csvParser.on('finish', () => {
-          blobStream.end(req.file.buffer)
-        });
-    };
-  });
-
-  // Set up second portion of pipe to write to GCS
+  // Set up writeStream for GCS upload
   const blob = storage
     .bucket(bucketName)
     .file(DATA_PREFIX + '/' + req.file.originalname);
   const blobStream = blob.createWriteStream({
     metadata: {
-      contentType: req.file.mimetype
+      // contentType: req.file.mimetype
+      contentType: 'application/json'
     }
   });
   blobStream.on("error", err => {
@@ -208,8 +205,59 @@ app.post("/upload", authenticate, upload.single("file"), (req, res, next) => {
     res.status(200).end('finished upload\n');
   });
 
-  // Send file through pipe
-  csvParser.end(req.file.buffer);
+  // Set up first portion of pipe (csvParser) to check headers
+  var csvHeaderChecker = new csvParser({separator: DELIMITER});
+  csvHeaderChecker.on('headers', function(headerList) {
+    var validHeader = requiredHeaders.every(val => headerList.indexOf(val) >= 0);
+    if (!validHeader) {
+      res.status(400).end(
+        'ERROR: Header does not contain required set of column names: ' +
+        requiredHeaders.join() + '\n'
+      );
+    } else {
+      csvValueChecker.end(req.file.buffer);
+    };
+  });
+
+  // Set up second portion of pipe to check values
+  var csvValueChecker = new csvFast({headers: true, delimiter: DELIMITER});
+  csvValueChecker
+    .validate( function(data, next) {
+      var validRow = true;
+      async.forEach(Object.keys(data),
+        function(key, callback) {
+          var validEntry = data[key].match(REGEX_NUMERIC); // In the future, each column should have its own regex
+          if(!validEntry) {
+            validRow = false;
+            console.log("Value INVALID");
+          };
+          callback();
+        }, function(err) {
+          if(err) {
+            console.log("Invalid row!");
+            next(err);
+          } else {
+            console.log("Valid row? " + validRow);
+            next(null, validRow);
+          };
+      });
+    })
+    .on('data-invalid', (data, index) => {
+      console.log(
+        "Improper formatting found in this row " + index + ": " + JSON.stringify(data)
+      );
+    })
+    .on('data', data => {
+      console.log(JSON.stringify(data));
+      blobStream.write(JSON.stringify(data));
+    })
+    .on('finish', () => {
+      console.log("Passed validator");
+      blobStream.end();
+    });
+
+  // Send file through beginning of pipe
+  csvHeaderChecker.end(req.file.buffer);
 });
 
 // Create unprotected route to retrieve "Welcome!"
@@ -219,22 +267,19 @@ app.get('/welcome', function(req, res) {
 
 // Create protected route for dummy resource
 app.get('/authcheck', authenticate, function(req, res) {
-  // var email = req.user.email;
-  // var bucketName = gcb.getHash(email);
-  // console.log("Bucket name: " + bucketName);
   res.status(200).json(req.user);
 });
-// Example HTTP request:
-// curl -H 'Authorization: Bearer [myToken]' localhost:3000/authcheck
 
 // Create protected route to list all files in bucket, user default
 // Modified from https://cloud.google.com/nodejs/docs/reference/storage/1.4.x/Bucket#getFiles
 app.get('/list/*', authenticate, function(req, res) {
   var email = req.user.email;
-  var bucketName = req.query.bucket;
-  if (!bucketName) {
-    bucketName = gcb.getHash(email);
-  };
+  // For now, only allow listing of files in the user's own bucket:
+  var bucketName = gcb.getHash(email);
+  // var bucketName = req.query.bucket;
+  // if (!bucketName) {
+  //   bucketName = gcb.getHash(email);
+  // };
   var prefix = req.params[0];
 
   storage
@@ -258,6 +303,7 @@ app.get('/list/*', authenticate, function(req, res) {
 // Create protected route to share all files in a given directory with
 // specified other user
 // Modified from https://cloud.google.com/nodejs/docs/reference/storage/1.4.x/Acl#readers
+// and https://cloud.google.com/nodejs/docs/reference/storage/1.4.x/Iam
 app.get('/share/*', authenticate, function(req, res) {
   var email = req.user.email;
   var bucketName = gcb.getHash(email);
@@ -286,49 +332,113 @@ app.get('/share/*', authenticate, function(req, res) {
       console.error('ERROR:', err);
     });
 
-    // Gets and updates the bucket's IAM policy
-    const members = [`user:${recipientEmail}`];
-    const roleLister = ROLE_OBJECT_LISTER;
-    bucket.iam
-      .getPolicy()
-      .then(results => {
-        const policy = results[0];
-
-        // Adds the new roles to the bucket's IAM policy
-        policy.bindings.push({
-          role: roleLister,
-          members: members,
-        });
-
-        // Updates the bucket's IAM policy
-        return bucket.iam.setPolicy(policy);
-      })
-      .then(() => {
-        console.log(
-          `Added the following member(s) with role ${roleLister} to ${bucketName}:`
-        );
-        members.forEach(member => {
-          console.log(`  ${member}`);
-        });
-      })
-      .catch(err => {
-        console.error('ERROR:', err);
-      });
+  // For now, do not give "object lister" IAM role when sharing any files
+  // // Gets and updates the bucket's IAM policy
+  // const members = [`user:${recipientEmail}`];
+  // const roleLister = ROLE_OBJECT_LISTER;
+  // bucket.iam
+  //   .getPolicy()
+  //   .then(results => {
+  //     const policy = results[0];
+  //
+  //     // Adds the new roles to the bucket's IAM policy
+  //     policy.bindings.push({
+  //       role: roleLister,
+  //       members: members,
+  //     });
+  //
+  //     // Updates the bucket's IAM policy
+  //     return bucket.iam.setPolicy(policy);
+  //   })
+  //   .then(() => {
+  //     console.log(
+  //       `Added the following member(s) with role ${roleLister} to ${bucketName}:`
+  //     );
+  //     members.forEach(member => {
+  //       console.log(`  ${member}`);
+  //     });
+  //   })
+  //   .catch(err => {
+  //     console.error('ERROR:', err);
+  //   });
 });
 
+// Revoke access to all files in a given subdirectory from a specified other user
+// Modified from https://cloud.google.com/nodejs/docs/reference/storage/1.4.x/Acl#readers
+// and https://cloud.google.com/nodejs/docs/reference/storage/1.4.x/Iam
+app.get('/revoke/*', authenticate, function(req, res) {
+  var email = req.user.email;
+  var bucketName = gcb.getHash(email);
+  var bucket = storage.bucket(bucketName);
+  // var recipientEmail = req.body;
+  var recipientEmail = req.query.recipient;
+  var prefix = req.params[0];
+  if (!prefix) {
+    prefix = DATA_PREFIX;
+  };
+  var subdir = prefix + '/'; // Prefix MUST be a subdirectory in the bucket
 
-// app.get('/download/:filename', authenticate, function(req, res) {
-//   var email = req.user.email;
-//   var bucketName = gcb.getHash(email);
-//   var filename = req.params.filename;
-//   storage
-//     .bucket(bucketName)
-//     .file(filename)
-//     .createReadStream()
-//     .on('error', function(err) { console.error('ERROR: ', err)})
-//     .on('end', function() {'Download complete'} )
-//     .pipe(res.status(200));
-// });
+  // Assign the given email to the ACL role of bucket object viewer
+  storage
+    .bucket(bucketName)
+    .getFiles({prefix: subdir}) // only share files in the specified subdir
+    .then(results => {
+      const files = results[0];
+      files.forEach(file => {
+        file.acl.readers.deleteUser(recipientEmail, function(err, aclObject) {});
+      });
+      res.status(200)
+        .send("Successfully revoked access to all ASW data in '" + subdir +
+              "' with " + recipientEmail + '\n'
+        );
+    })
+    .catch(err => {
+      console.error('ERROR:', err);
+    });
+
+  // For now, do not give "object lister" IAM role when sharing any files
+  // // Gets and updates the bucket's IAM policy
+  // const members = [`user:${recipientEmail}`];
+  // const roleLister = ROLE_OBJECT_LISTER;
+  // bucket.iam
+  //   .getPolicy()
+  //   .then(results => {
+  //     const policy = results[0];
+  //
+  //     // Finds and updates the appropriate role-member group
+  //     const index = policy.bindings.findIndex(role => role.role === roleLister);
+  //     let role = policy.bindings[index];
+  //     if (role) {
+  //       role.members = role.members.filter(
+  //         member => members.indexOf(member) === -1
+  //       );
+  //
+  //       // Updates the policy object with the new (or empty) role-member group
+  //       if (role.members.length === 0) {
+  //         policy.bindings.splice(index, 1);
+  //       } else {
+  //         policy.bindings.index = role;
+  //       }
+  //
+  //       // Updates the bucket's IAM policy
+  //       return bucket.iam.setPolicy(policy);
+  //     } else {
+  //       // No matching role-member group(s) were found
+  //       throw new Error('No matching role-member group(s) found.');
+  //     }
+  //   })
+  //   .then(() => {
+  //     console.log(
+  //       `Removed the following member(s) with role ${roleLister} from ${bucketName}:`
+  //     );
+  //     members.forEach(member => {
+  //       console.log(`  ${member}`);
+  //     });
+  //   })
+  // .catch(err => {
+  //   console.error('ERROR:', err);
+  // });
+});
 
 // Create protected route to download file
 // Test wildcard routing
@@ -361,17 +471,6 @@ function serialize(req, res, next) {
     email: req.user.emails[0].value
   };
   next();
-  // db.users.updateOrCreate(req.user, function(err, user) {
-  //   if (err) {
-  //     return next(err);
-  //   }
-  //   // we store information needed in token in req.user again
-  //   req.user = {
-  //     id: user.id,
-  //     email: user.emails[0].value
-  //   };
-  //   next();
-  // });
 }
 
 function generateToken(req, res, next) {
@@ -395,21 +494,32 @@ function respond2(req, res, next) {
   // Save the JWT as a filename in the user's bucket (TEMPORARY SOL'N)
   var email = req.user.email;
   var bucketName = gcb.getHash(email);
-  var jwtFile = storage.bucket(bucketName).file(JWT_FILENAME);
+  var jwtFile = storage
+    .bucket(bucketName)
+    .file(PRIVATE_PREFIX + '/' + JWT_FILENAME);
 
-  // Instantiates a Readable stream
-  var s = new Readable();
-  s._read = function noop() {};
-  s.push(req.token);
-  s.push(null);
-  s.pipe(jwtFile.createWriteStream())
-    .on('error', function(err) { console.error('ERROR: ', err)});
+  var jwtStream = jwtFile.createWriteStream();
+  jwtStream.on("error", err => {
+    console.error("ERROR: " + err);
+  });
+  jwtStream.on("finish", () => {
+    console.log("User and email and bucket name:");
+    console.log(req.user.id + "." + req.user.email + "." + bucketName);
+    next();
+  });
 
-  console.log("User and email and bucket name:");
-  console.log(req.user.id + "." + req.user.email + "." + bucketName);
-  // res.status(200).json({
-  //   user: req.user,
-  //   token: req.token
-  // });
-  next();
+  // Send file through pipe
+  jwtStream.end(req.token);
 }
+
+// // Function to check for numeric values
+// function numeric(string) {
+//   if(string.match(REGEX_NUMERIC)) {
+//     console.log(string + " is numeric\n");
+//     return true;
+//   } else {
+//     console.log(string + " is NOT numeric\n");
+//     return false;
+//   }
+// };
+//
