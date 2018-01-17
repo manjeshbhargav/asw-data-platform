@@ -30,6 +30,8 @@ var requiredHeaders = fs.readFileSync(
     path.join(`${__dirname}/../requirement/asw_req_column_names.csv`), 'utf8'
   ).split(',');
 
+console.log(requiredHeaders);
+
 // var requirement_dict;
 // var taken;
 // fs.readFile('../requirement/reqs_ecoevo_sub.json', 'utf8', function (err, data) {
@@ -60,12 +62,17 @@ const TOKEN_TIME = process.env.TOKEN_TIME || '9999h';
 const REQUEST_BODY_LIMIT = process.env.REQUEST_BODY_LIMIT || '16mb';
 const JWT_FILENAME = 'jwt';
 const PRIVATE_PREFIX = 'system';
-const DATA_PREFIX = 'data'; // 'Prefix by which to filter, e.g. public/';
+const DATA_PREFIX = 'aq-data'; // 'Prefix by which to filter, e.g. public/';
 const ROLE_OBJECT_LISTER = 'projects/glowing-palace-179100/roles/storage.objectLister';
 const UPLOAD_SIZE_LIMIT = 10 * 1024 * 1024; // no larger than 10mb
 const DELIMITER = '\t';
 const REGEX_NUMERIC = /^[0-9]+$/;
 // const REGEX_ALPHANUMERIC = /^[0-9a-zA-Z]+$/;
+const USER_DB_FILENAME = 'users.txt';
+
+// const REGEX_VALUECHECKER = {
+//
+// }
 
 // HTTP(S) server constants.
 const DOMAIN = process.env.DOMAIN || 'localhost:8080';
@@ -136,18 +143,19 @@ app.get('/signin', passport.authenticate('google', {
 // Handle Google OAuth 2.0 server response.
 app.get('/signin/callback', passport.authenticate('google', {
   failureRedirect: '/?state=signinFailed'
-}), serialize, generateToken, respond2, async ({ user }, response) => {
-  console.log(JSON.stringify(user));
-  const email = user.email;
-  console.log(email);
-  try {
-    var bucketName = await gcb.gcbucket(email);
-    console.log("Redirect to " + `${GOOG_STORAGE_URL}/${bucketName}`);
-    response.redirect(`${GOOG_STORAGE_URL}/${bucketName}`);
-  } catch (e) {
-    console.error(e);
-    response.redirect('/?state=bucketError');
-  }
+}), serialize, generateToken, respond2, recordUser,
+  async ({ user }, response) => {
+    console.log(JSON.stringify(user));
+    const email = user.email;
+    console.log(email);
+    try {
+      var bucketName = await gcb.gcbucket(email);
+      console.log("Redirect to " + `${GOOG_STORAGE_URL}/${bucketName}`);
+      response.redirect(`${GOOG_STORAGE_URL}/${bucketName}`);
+    } catch (e) {
+      console.error(e);
+      response.redirect('/?state=bucketError');
+    }
 });
 
 // Create and run the HTTP server.
@@ -441,7 +449,7 @@ app.get('/revoke/*', authenticate, function(req, res) {
 });
 
 // Create protected route to download file
-// Test wildcard routing
+// Response header from this thread https://stackoverflow.com/questions/7288814/download-a-file-from-nodejs-server-using-express
 app.get('/download/*', authenticate, function(req, res) {
   var email = req.user.email;
   var bucketName = req.query.bucket;
@@ -450,13 +458,27 @@ app.get('/download/*', authenticate, function(req, res) {
   };
   console.log("Download from bucket " + bucketName);
   var filename = req.params[0];
-  storage
+
+  res.setHeader('Content-disposition', 'attachment; filename=' + filename);
+
+  var file = storage
     .bucket(bucketName)
     .file(filename)
+
+  file
+    .getMetadata()
+    .then(results => {
+      const metadata = results[0];
+      const mimetype = metadata.contentType;
+      res.setHeader('Content-type', mimetype);
+    });
+
+  file
     .createReadStream()
     .on('error', function(err) { console.error('ERROR: ', err)})
     .on('end', function() {'Download complete'} )
     .pipe(res.status(200));
+    // .pipe(res.download());
 });
 
 
@@ -510,6 +532,31 @@ function respond2(req, res, next) {
 
   // Send file through pipe
   jwtStream.end(req.token);
+};
+
+function recordUser(req, res, next) {
+  // Save the user ID in a file accessible only to project owners/admins
+  var email = req.user.email;
+  var bucketName = '3c43a972dbc5046b8eb0fdb4f2cffadd';
+  var readStream = storage
+    .bucket(bucketName)
+    .file(USER_DB_FILENAME)
+    .createReadStream()
+    .on('error', err => { console.error('ReadStream ERROR: ', err)})
+    .on('end', () => {'Download complete'} );
+
+  var writeStream = storage
+    .bucket(bucketName)
+    .file(USER_DB_FILENAME)
+    .createWriteStream()
+    .on("error", err => { console.error('WriteStream ERROR: ' + err)})
+    .on("finish", () => {
+      console.log('finished upload');
+      next();
+    });
+
+  readStream.pipe(writeStream);
+  writeStream.write(email + '\n');
 }
 
 // // Function to check for numeric values
