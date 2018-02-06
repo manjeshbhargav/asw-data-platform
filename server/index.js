@@ -58,7 +58,7 @@ const DEFAULT_BUCKET_NAME = process.env.DEFAULT_BUCKET_NAME;
 const TEST_UPLOAD_FILENAME = process.env.TEST_UPLOAD_FILENAME || 'test-upload.txt';
 const TEST_UPLOAD_FILENAME_JSON = 'test-upload.json';
 const JWT_SECRET = process.env.JWT_SECRET;
-const TOKEN_TIME = process.env.TOKEN_TIME || '9999h';
+const TOKEN_TIME = process.env.TOKEN_TIME || '168h';
 const REQUEST_BODY_LIMIT = process.env.REQUEST_BODY_LIMIT || '16mb';
 const JWT_FILENAME = 'jwt';
 const PRIVATE_PREFIX = 'system';
@@ -69,6 +69,7 @@ const DELIMITER = '\t';
 const REGEX_NUMERIC = /^[0-9]+$/;
 // const REGEX_ALPHANUMERIC = /^[0-9a-zA-Z]+$/;
 const USER_DB_FILENAME = 'users.txt';
+const ERR_EXCEPTION_ACL_NOT_FOUND = 'ApiError: Not Found';
 
 // const REGEX_VALUECHECKER = {
 //
@@ -188,30 +189,17 @@ var upload = multer({
 
 // Create protected route to upload tab-delimited txt file and check that it
 // meets header requirements
-app.post("/upload", authenticate, upload.single("file"),
-// (req, res, next) => {
-  async (req, res) => {
+app.post("/upload*", authenticate, upload.single("file"), async (req, res) => {
   var email = req.user.email;
-  // var email = req.user.email;
   var bucketName = gcb.getHash(email);
 
-  // Set up writeStream for GCS upload
-  const blob = storage
-    .bucket(bucketName)
-    .file(DATA_PREFIX + '/' + req.file.originalname);
-  const blobStream = blob.createWriteStream({
-    metadata: {
-      // contentType: req.file.mimetype
-      contentType: 'application/json'
-    }
-  });
-  blobStream.on("error", err => {
-    console.error("ERROR: " + err);
-  });
-  blobStream.on("finish", () => {
-    console.log('finished upload');
-    res.status(200).end('finished upload\n');
-  });
+  // Parameter/prefix MUST be a valid folder name:
+  var prefix = req.params[0];
+  if (prefix.length === 0) {
+    prefix = DATA_PREFIX;
+  } else {
+    prefix = prefix.slice(1) + '/'; // ensures that parameter refers to folder
+  };
 
   // Set up first portion of pipe (csvParser) to check headers
   var csvHeaderChecker = new csvParser({separator: DELIMITER});
@@ -219,7 +207,7 @@ app.post("/upload", authenticate, upload.single("file"),
     var validHeader = requiredHeaders.every(val => headerList.indexOf(val) >= 0);
     if (!validHeader) {
       res.status(400).end(
-        'ERROR: Header does not contain required set of column names: ' +
+        'Upload failed: Header does not contain required set of column names: ' +
         requiredHeaders.join() + '\n'
       );
     } else {
@@ -227,41 +215,76 @@ app.post("/upload", authenticate, upload.single("file"),
     };
   });
 
-  // Set up second portion of pipe to check values
+  // Set up second portion of pipe to check values with regex
   var csvValueChecker = new csvFast({headers: true, delimiter: DELIMITER});
   csvValueChecker
     .validate( function(data, next) {
       var validRow = true;
-      async.forEach(Object.keys(data),
-        function(key, callback) {
+
+      async.forEach(Object.keys(data), function(key, callback) {
+
           var validEntry = data[key].match(REGEX_NUMERIC); // In the future, each column should have its own regex
+
+          // If any value is invalid, reject the entire file
           if(!validEntry) {
+            var errMsg = 'Upload failed:\nInvalid entry for "' + key +
+              '" in row:\n' + JSON.stringify(data) + '\n';
+            console.log(errMsg);
+            res.status(400).json({
+              success: false,
+              error_key: key,
+              error_row: data
+            });
             validRow = false;
-            console.log("Value INVALID");
           };
           callback();
+
         }, function(err) {
           if(err) {
-            console.log("Invalid row!");
-            next(err);
-          } else {
-            console.log("Valid row? " + validRow);
-            next(null, validRow);
+            console.error(err);
           };
+          next(null, validRow)
       });
     })
     .on('data-invalid', (data, index) => {
-      console.log(
-        "Improper formatting found in this row " + index + ": " + JSON.stringify(data)
-      );
+      try {
+        blobStream.end( function() {
+          blob.delete()
+            .then(console.log("Attempted upload was deleted"))
+        });
+      } catch(e) {
+        console.log(e.message)
+      };
     })
     .on('data', data => {
-      console.log(JSON.stringify(data));
+      // console.log(JSON.stringify(data));
       blobStream.write(JSON.stringify(data));
     })
     .on('finish', () => {
-      console.log("Passed validator");
+      console.log("Upload stream finished");
       blobStream.end();
+    });
+
+    // Set up writeStream (last portion of pipe) for upload to GCS
+    const filepath = prefix + req.file.originalname;
+    const blob = storage
+      .bucket(bucketName)
+      .file(filepath);
+    const blobStream = blob.createWriteStream({
+      metadata: {
+        // contentType: req.file.mimetype
+        contentType: 'application/json'
+      }
+    });
+    blobStream.on("error", err => {
+      console.error("ERROR: " + err);
+    });
+    blobStream.on("finish", () => {
+      // console.log('finished upload');
+      res.status(200).json({
+        success: true,
+        filename: filepath
+      });
     });
 
   // Send file through beginning of pipe
@@ -278,33 +301,151 @@ app.get('/authcheck', authenticate, function(req, res) {
   res.status(200).json(req.user);
 });
 
+// app.get('/refresh-token', authenticate, generateToken, function(req, res) {
+//   res.status(200).send(req.token);
+// })
+
 // Create protected route to list all files in bucket, user default
 // Modified from https://cloud.google.com/nodejs/docs/reference/storage/1.4.x/Bucket#getFiles
-app.get('/list/*', authenticate, function(req, res) {
+app.get('/list*', authenticate, function(req, res) {
   var email = req.user.email;
-  // For now, only allow listing of files in the user's own bucket:
-  var bucketName = gcb.getHash(email);
-  // var bucketName = req.query.bucket;
-  // if (!bucketName) {
-  //   bucketName = gcb.getHash(email);
-  // };
+
+  // Parameters include prefix and bucket:
+  // Prefix MUST be a directory
   var prefix = req.params[0];
+  if (prefix.length === 0) {
+    prefix = '';
+  } else {
+    prefix = prefix.slice(1) + '/';
+  };
+
+  // If bucket is not specified, use the user's bucket
+  var bucketName = req.query.bucket;
+  if (!bucketName) {
+    bucketName = gcb.getHash(email);
+  };
 
   storage
     .bucket(bucketName)
     .getFiles({prefix: prefix})
     .then(results => {
       const files = results[0];
-      var fileList = [];
-      files.forEach(file => {
-        fileList.push(file.name);
-      });
-      res.write("Listing files in bucket: " + bucketName + '\n');
-      res.write(fileList.join('\n') + '\n');
-      res.status(200).end();
+
+      // If no files found, return 404 error code
+      if (files.length === 0) {
+        res.status(404).json({
+          success: false,
+          msg: "No files found"
+        })
+        // res.status(404).end("No files found\n");
+      } else {
+        // Else loop through all files
+
+        var fileList = [];
+        files.forEach(file => { // There is no "end" event for forEach()
+                                // so we use length matching to determine "end" instead.
+          fileList.push({
+            name: file.name,
+            metadata: file.metadata,
+          });
+
+          if (fileList.length === files.length) {
+            res.status(200).json({
+              success: true,
+              prefix: prefix,
+              results: fileList
+            });
+          };
+        });
+
+        // res.write(`Successfully shared files in "${subdir}" with ${recipientEmail}\n`);
+        // res.write("Listing files shared:\n");
+        // files.forEach(file => {
+        //   res.write(`https://storage.cloud.google.com/${bucketName}/${file.name}` + '\n');
+        //   file.acl.readers.addUser(recipientEmail, function(err, aclObject) {});
+        // });
+        // res.status(200).end();
+
+      };
     })
     .catch(err => {
       console.error('ERROR:', err);
+      res.status(404).json({
+        success: false,
+        msg: err
+      })
+    });
+});
+
+// Create protected route to list all files in bucket, user default
+// Identical to /list route except parameter does not need to specify folder
+app.get('/search*', authenticate, function(req, res) {
+  var email = req.user.email;
+
+  // Parameters include prefix and bucket:
+  // Prefix MUST be a directory
+  var prefix = req.params[0];
+  if (prefix.length === 0) {
+    prefix = '';
+  } else {
+    prefix = prefix.slice(1);
+  };
+
+  // If bucket is not specified, use the user's bucket
+  var bucketName = req.query.bucket;
+  if (!bucketName) {
+    bucketName = gcb.getHash(email);
+  };
+
+  storage
+    .bucket(bucketName)
+    .getFiles({prefix: prefix})
+    .then(results => {
+      const files = results[0];
+
+      // If no files found, return 404 error code
+      if (files.length === 0) {
+        res.status(404).json({
+          success: false,
+          msg: "No files found"
+        })
+        // res.status(404).end("No files found\n");
+      } else {
+        // Else loop through all files
+
+        var fileList = [];
+        files.forEach(file => { // There is no "end" event for forEach()
+                                // so we use length matching to determine "end" instead.
+          fileList.push({
+            name: file.name,
+            metadata: file.metadata,
+          });
+
+          if (fileList.length === files.length) {
+            res.status(200).json({
+              success: true,
+              prefix: prefix,
+              results: fileList
+            });
+          };
+        });
+
+        // res.write(`Successfully shared files in "${subdir}" with ${recipientEmail}\n`);
+        // res.write("Listing files shared:\n");
+        // files.forEach(file => {
+        //   res.write(`https://storage.cloud.google.com/${bucketName}/${file.name}` + '\n');
+        //   file.acl.readers.addUser(recipientEmail, function(err, aclObject) {});
+        // });
+        // res.status(200).end();
+
+      };
+    })
+    .catch(err => {
+      console.error('ERROR:', err);
+      res.status(404).json({
+        success: false,
+        msg: err
+      })
     });
 });
 
@@ -312,32 +453,79 @@ app.get('/list/*', authenticate, function(req, res) {
 // specified other user
 // Modified from https://cloud.google.com/nodejs/docs/reference/storage/1.4.x/Acl#readers
 // and https://cloud.google.com/nodejs/docs/reference/storage/1.4.x/Iam
-app.get('/share/*', authenticate, function(req, res) {
+app.get('/share*', authenticate, function(req, res) {
   var email = req.user.email;
   var bucketName = gcb.getHash(email);
   var bucket = storage.bucket(bucketName);
-  // var recipientEmail = req.body;
   var recipientEmail = req.query.recipient;
+
+  // Parameters include prefix and bucket:
+  // Prefix MUST be a directory
   var prefix = req.params[0];
-  if (!prefix) {
+  if (prefix.length === 0) {
     prefix = DATA_PREFIX;
+  } else {
+    prefix = prefix.slice(1) + '/';
   };
-  var subdir = prefix + '/'; // Prefix MUST be a subdirectory in the bucket
 
   // Assign the given email to the ACL role of bucket object viewer
   storage
     .bucket(bucketName)
-    .getFiles({prefix: subdir}) // only share files in the specified subdir
+    .getFiles({prefix: prefix}) // only share files in the specified subdir
     .then(results => {
       const files = results[0];
-      files.forEach(file => {
-        file.acl.readers.addUser(recipientEmail, function(err, aclObject) {});
-      });
-      res.status(200).send("Successfully shared all ASW data in '" + subdir +
-      "' with " + recipientEmail + '\n');
+
+      // If no files found, return 404 error code
+      if (files.length === 0) {
+        res.status(404).json({
+          success: false,
+          msg: "No files found"
+        })
+        // res.status(404).end("No files found\n");
+      } else {
+        // Else loop through all files
+
+        var fileList = [];
+        files.forEach(file => { // There is no "end" event for forEach()
+                                // so we use length matching to determine "end" instead.
+
+          // Give READ access to recipient
+          file.acl.readers.addUser(recipientEmail, function(err, aclObject) {
+            console.error(err);
+          });
+
+          fileList.push({
+            name: file.name,
+            metadata: file.metadata,
+          });
+
+          if (fileList.length === files.length) {
+            res.status(200).json({
+              success: true,
+              recipient: recipientEmail,
+              folder: prefix,
+              contents: fileList
+            });
+          };
+        });
+
+        // res.write(`Successfully shared files in "${subdir}" with ${recipientEmail}\n`);
+        // res.write("Listing files shared:\n");
+        // files.forEach(file => {
+        //   res.write(`https://storage.cloud.google.com/${bucketName}/${file.name}` + '\n');
+        //   file.acl.readers.addUser(recipientEmail, function(err, aclObject) {});
+        // });
+        // res.status(200).end();
+
+      };
+
     })
     .catch(err => {
       console.error('ERROR:', err);
+      res.status(404).json({
+        success: false,
+        msg: err
+      });
     });
 
   // For now, do not give "object lister" IAM role when sharing any files
@@ -371,38 +559,158 @@ app.get('/share/*', authenticate, function(req, res) {
   //   });
 });
 
+// List files for which the recipient has READ or WRITE access
+app.get('/acl', authenticate, function(req, res) {
+  var email = req.user.email;
+  var bucketName = gcb.getHash(email);
+  var recipient = 'rogerthatdumborat@gmail.com'; // FOR NOW, RECIPIENT IS ROGERTHATDUMBORAT
+
+  const options = {
+    // Specify the user
+    entity: `user-${recipient}`,
+  };
+
+  // Gets the ACL for the bucket for the recipient
+  storage
+    .bucket(bucketName)
+    .getFiles()
+    .then(results => {
+      const files = results[0];
+      var i = 0;
+
+      files.forEach(file => { // There is no "end" event for forEach()
+                              // so we use a counter to determine "end" instead.
+        const filename = file.name;
+        file.acl.get(options)
+        .then(results => {
+          i = i + 1;
+          // const aclObject = results[0];
+          // console.log(`${filename}\t${aclObject.role}: ${aclObject.entity}`);
+          res.write(`gs://${bucketName}/${filename}\n`);
+          if(i === files.length) {
+            res.end();
+          };
+        })
+        .catch(err => {
+          if(err != ERR_EXCEPTION_ACL_NOT_FOUND) {
+            console.error('ERROR:', err);
+          } else {
+            i = i + 1;
+            if(i === files.length) {
+              res.end();
+            };
+          };
+        });
+      });
+    })
+    .catch(err => {
+      console.error('ERROR:', err);
+    });
+  });
+
+// app.get('/list-buckets', authenticate, function(req, res) {
+//   request({
+//     uri: 'https://www.googleapis.com/storage/v1/b',
+//     qs: {
+//
+//     }
+//   })
+// };
+
+// Gets and displays the bucket's IAM policy
+app.get('/acl-bucket', authenticate, function(req, res) {
+  var email = req.user.email;
+  var bucketName = gcb.getHash(email);
+
+  storage
+    .bucket(bucketName)
+    .iam.getPolicy()
+    .then(results => {
+      const policy = results[0].bindings;
+
+      // Displays the roles in the bucket's IAM policy
+      console.log(`Roles for bucket ${bucketName}:`);
+      policy.forEach(role => {
+        console.log(`  Role: ${role.role}`);
+        console.log(`  Members:`);
+
+        const members = role.members;
+        members.forEach(member => {
+          console.log(`    ${member}`);
+        });
+      });
+    })
+    .catch(err => {
+      console.error('ERROR:', err);
+    });
+});
+
 // Revoke access to all files in a given subdirectory from a specified other user
 // Modified from https://cloud.google.com/nodejs/docs/reference/storage/1.4.x/Acl#readers
 // and https://cloud.google.com/nodejs/docs/reference/storage/1.4.x/Iam
-app.get('/revoke/*', authenticate, function(req, res) {
+app.get('/revoke*', authenticate, function(req, res) {
   var email = req.user.email;
   var bucketName = gcb.getHash(email);
   var bucket = storage.bucket(bucketName);
   // var recipientEmail = req.body;
   var recipientEmail = req.query.recipient;
+
+  // Parameters include prefix and bucket:
+  // Prefix MUST be a directory
   var prefix = req.params[0];
-  if (!prefix) {
+  if (prefix.length === 0) {
     prefix = DATA_PREFIX;
+  } else {
+    prefix = prefix.slice(1) + '/';
   };
-  var subdir = prefix + '/'; // Prefix MUST be a subdirectory in the bucket
 
   // Assign the given email to the ACL role of bucket object viewer
   storage
     .bucket(bucketName)
-    .getFiles({prefix: subdir}) // only share files in the specified subdir
+    .getFiles({prefix: prefix}) // only share files in the specified subdir
     .then(results => {
       const files = results[0];
-      files.forEach(file => {
-        file.acl.readers.deleteUser(recipientEmail, function(err, aclObject) {});
-      });
-      res.status(200)
-        .send("Successfully revoked access to all ASW data in '" + subdir +
-              "' with " + recipientEmail + '\n'
-        );
+
+      // If no files found, return 404 error code
+      if (files.length === 0) {
+        res.status(404).json({
+          success: false,
+          msg: "No files found"
+        })
+        // res.status(404).end("No files found\n");
+      } else {
+        // Else loop through all files
+
+        var fileList = [];
+        files.forEach(file => { // There is no "end" event for forEach()
+                                // so we use length matching to determine "end" instead.
+
+          // Remove READ access from recipient
+          file.acl.readers.deleteUser(recipientEmail, function(err, aclObject) {
+            console.error(err);
+          });
+
+          fileList.push({
+            name: file.name,
+            metadata: file.metadata,
+          });
+
+          // Once all files have been read:
+          if (fileList.length === files.length) {
+            res.status(200).json({
+              success: true,
+              recipient: recipientEmail,
+              folder: prefix,
+              contents: fileList
+            });
+          };
+        });
+      };
     })
     .catch(err => {
       console.error('ERROR:', err);
     });
+  });
 
   // For now, do not give "object lister" IAM role when sharing any files
   // // Gets and updates the bucket's IAM policy
@@ -446,7 +754,6 @@ app.get('/revoke/*', authenticate, function(req, res) {
   // .catch(err => {
   //   console.error('ERROR:', err);
   // });
-});
 
 // Create protected route to download file
 // Response header from this thread https://stackoverflow.com/questions/7288814/download-a-file-from-nodejs-server-using-express
@@ -456,8 +763,10 @@ app.get('/download/*', authenticate, function(req, res) {
   if (!bucketName) {
     bucketName = gcb.getHash(email);
   };
-  console.log("Download from bucket " + bucketName);
   var filename = req.params[0];
+
+  console.log("Download from bucket " + bucketName);
+  console.log("Download file: " + filename)
 
   res.setHeader('Content-disposition', 'attachment; filename=' + filename);
 
@@ -475,7 +784,17 @@ app.get('/download/*', authenticate, function(req, res) {
 
   file
     .createReadStream()
-    .on('error', function(err) { console.error('ERROR: ', err)})
+    .on('error', function(err) {
+      if( err == "ApiError: Not Found") {
+        // console.error('ERROR: ', err)
+        console.error('ERROR: File not found');
+        res.status(400).json({
+          success: false,
+          filename: filename,
+          msg: "File does not exist"
+        })
+      }
+    })
     .on('end', function() {'Download complete'} )
     .pipe(res.status(200));
     // .pipe(res.download());
@@ -557,7 +876,7 @@ function recordUser(req, res, next) {
 
   readStream.pipe(writeStream);
   writeStream.write(email + '\n');
-}
+};
 
 // // Function to check for numeric values
 // function numeric(string) {
