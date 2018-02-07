@@ -15,6 +15,7 @@ const storage = new Storage({
  * @returns {Promise<string>} The name of the bucket.
  */
 async function gcbucket(email) {
+  // console.log("Entered gbucket");
   const hash = getHash(email);
 
   // If the bucket already exists, return its name.

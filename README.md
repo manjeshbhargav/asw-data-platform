@@ -63,6 +63,10 @@ List only files within a specified directory, e.g. "test"
 
 `curl -H "Authorization: Bearer [JWT]" https://glowing-palace-179100.appspot.com/list/test`
 
+List files in another user's bucket using the `bucket` parameter *(which will eventually be replaced by the `user` parameter)*
+
+`curl -H "Authorization: Bearer [JWT]" https://glowing-palace-179100.appspot.com/list?bucket=[bucketName]`
+
 ## Search files *(BETA feature)*
 
 List files matching a specified prefix, e.g. “test”:

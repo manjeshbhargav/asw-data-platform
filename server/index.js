@@ -142,10 +142,13 @@ app.get('/signin', passport.authenticate('google', {
 }));
 
 // Handle Google OAuth 2.0 server response.
-app.get('/signin/callback', passport.authenticate('google', {
+app.get('/signin/callback', function(req, res, next) {
+  // console.log("Entered callback");
+  next();
+}, passport.authenticate('google', {
   failureRedirect: '/?state=signinFailed'
-}), serialize, generateToken, respond2, recordUser,
-  async ({ user }, response) => {
+}), serialize, generateToken, recordUser,
+  async ({ user }, response, next) => {
     console.log(JSON.stringify(user));
     const email = user.email;
     console.log(email);
@@ -153,11 +156,15 @@ app.get('/signin/callback', passport.authenticate('google', {
       var bucketName = await gcb.gcbucket(email);
       console.log("Redirect to " + `${GOOG_STORAGE_URL}/${bucketName}`);
       response.redirect(`${GOOG_STORAGE_URL}/${bucketName}`);
+      next();
     } catch (e) {
       console.error(e);
       response.redirect('/?state=bucketError');
+      next();
     }
-});
+  },
+  saveToken
+);
 
 // Create and run the HTTP server.
 const server = app.listen(PORT, () => {
@@ -807,6 +814,7 @@ app.get('/download/*', authenticate, function(req, res) {
 //////////////////////
 
 function serialize(req, res, next) {
+  // console.log("Entered serialize");
   req.user = {
     id: req.user.id,
     email: req.user.emails[0].value
@@ -815,6 +823,7 @@ function serialize(req, res, next) {
 }
 
 function generateToken(req, res, next) {
+  // console.log("Entered generateToken");
   req.token = jwt.sign({
     id: req.user.id,
     email: req.user.email
@@ -831,8 +840,9 @@ function respond(req, res) {
   });
 }
 
-function respond2(req, res, next) {
+function saveToken(req, res) {
   // Save the JWT as a filename in the user's bucket (TEMPORARY SOL'N)
+  // console.log("Entered saveToken");
   var email = req.user.email;
   var bucketName = gcb.getHash(email);
   var jwtFile = storage
@@ -846,7 +856,6 @@ function respond2(req, res, next) {
   jwtStream.on("finish", () => {
     console.log("User and email and bucket name:");
     console.log(req.user.id + "." + req.user.email + "." + bucketName);
-    next();
   });
 
   // Send file through pipe
@@ -855,6 +864,7 @@ function respond2(req, res, next) {
 
 function recordUser(req, res, next) {
   // Save the user ID in a file accessible only to project owners/admins
+  // console.log("Entered recordUser");
   var email = req.user.email;
   var bucketName = '3c43a972dbc5046b8eb0fdb4f2cffadd';
   var readStream = storage
