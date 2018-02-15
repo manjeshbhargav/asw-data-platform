@@ -22,35 +22,10 @@ const expressJwt = require('express-jwt');
 const csvParser = require("csv-parser");
 const csvFast = require("fast-csv")
 const async = require('async');
-// const requirement = require('../requirement/requirement');
 
-// var requiredHeaders = JSON.parse(
-//   fs.readFileSync(path.join(`${__dirname}/../requirement/asw_req_column_names.json`), 'utf8'));
 var requiredHeaders = fs.readFileSync(
     path.join(`${__dirname}/../requirement/asw_req_column_names.csv`), 'utf8'
   ).split(',');
-
-console.log(requiredHeaders);
-
-// var requirement_dict;
-// var taken;
-// fs.readFile('../requirement/reqs_ecoevo_sub.json', 'utf8', function (err, data) {
-//     if (err) throw err;
-//     requirement_dict = JSON.parse(data);
-//
-//     // read courses taken
-//     fs.readFile('../requirement/taken_unsatisfied.txt', 'utf8', function (err, data) {
-//         if (err) throw err;
-//
-//         taken = data.toString().split("\n");
-//         if (taken[taken.length - 1] === "") {
-//             taken.splice(-1);
-//         }
-//
-//         // if both files read successfully, check whether reqs have been fulfilled
-//         requirement.checkFulfilledCourses(requirement_dict, taken);
-//     });
-// });
 
 // Programmatic access constants
 const PROJECT_ID = process.env.PROJECT_ID;
@@ -64,12 +39,15 @@ const JWT_FILENAME = 'jwt';
 const PRIVATE_PREFIX = 'system';
 const DATA_PREFIX = 'aq-data'; // 'Prefix by which to filter, e.g. public/';
 const ROLE_OBJECT_LISTER = 'projects/glowing-palace-179100/roles/storage.objectLister';
+const ROLE_COLLABORATOR = 'projects/glowing-palace-179100/roles/storage.collaborator';
 const UPLOAD_SIZE_LIMIT = 10 * 1024 * 1024; // no larger than 10mb
-const DELIMITER = '\t';
+const UPLOAD_DELIMITER = '\t';
+const FILENAME_DELIMITER_SUB = ':';
 const REGEX_NUMERIC = /^[0-9]+$/;
 // const REGEX_ALPHANUMERIC = /^[0-9a-zA-Z]+$/;
 const USER_DB_FILENAME = 'users.txt';
 const ERR_EXCEPTION_ACL_NOT_FOUND = 'ApiError: Not Found';
+const DIRECTORY_CONTENT_TYPE = "application/x-www-form-urlencoded;charset=UTF-8";
 
 // const REGEX_VALUECHECKER = {
 //
@@ -142,10 +120,7 @@ app.get('/signin', passport.authenticate('google', {
 }));
 
 // Handle Google OAuth 2.0 server response.
-app.get('/signin/callback', function(req, res, next) {
-  // console.log("Entered callback");
-  next();
-}, passport.authenticate('google', {
+app.get('/signin/callback', passport.authenticate('google', {
   failureRedirect: '/?state=signinFailed'
 }), serialize, generateToken, recordUser,
   async ({ user }, response, next) => {
@@ -196,20 +171,26 @@ var upload = multer({
 
 // Create protected route to upload tab-delimited txt file and check that it
 // meets header requirements
-app.post("/upload*", authenticate, upload.single("file"), async (req, res) => {
-  var email = req.user.email;
-  var bucketName = gcb.getHash(email);
+app.post("/upload/*", authenticate, getBucketName, getDirectory,
+upload.single("file"), getFileName, async (req, res, next) => {
+  var bucketName = req.bucketName;
+  var directory = req.directory;
 
-  // Parameter/prefix MUST be a valid folder name:
-  var prefix = req.params[0];
-  if (prefix.length === 0) {
-    prefix = DATA_PREFIX;
+  // Extract filename from query parameters,
+  // or, if undefined, use file's original name
+  var filename = req.query.filename;
+  if (filename) {
+    if(filename.slice(-1) != '/') {
+      filename = filename + '/';
+    } else {
+      filename = filename;
+    }
   } else {
-    prefix = prefix.slice(1) + '/'; // ensures that parameter refers to folder
+    filename = req.file.originalname;
   };
 
   // Set up first portion of pipe (csvParser) to check headers
-  var csvHeaderChecker = new csvParser({separator: DELIMITER});
+  var csvHeaderChecker = new csvParser({separator: UPLOAD_DELIMITER});
   csvHeaderChecker.on('headers', function(headerList) {
     var validHeader = requiredHeaders.every(val => headerList.indexOf(val) >= 0);
     if (!validHeader) {
@@ -223,7 +204,7 @@ app.post("/upload*", authenticate, upload.single("file"), async (req, res) => {
   });
 
   // Set up second portion of pipe to check values with regex
-  var csvValueChecker = new csvFast({headers: true, delimiter: DELIMITER});
+  var csvValueChecker = new csvFast({headers: true, delimiter: UPLOAD_DELIMITER});
   csvValueChecker
     .validate( function(data, next) {
       var validRow = true;
@@ -273,7 +254,7 @@ app.post("/upload*", authenticate, upload.single("file"), async (req, res) => {
     });
 
     // Set up writeStream (last portion of pipe) for upload to GCS
-    const filepath = prefix + req.file.originalname;
+    const filepath = directory + filename;
     const blob = storage
       .bucket(bucketName)
       .file(filepath);
@@ -290,13 +271,17 @@ app.post("/upload*", authenticate, upload.single("file"), async (req, res) => {
       // console.log('finished upload');
       res.status(200).json({
         success: true,
-        filename: filepath
+        filepath: filepath
       });
     });
 
   // Send file through beginning of pipe
   csvHeaderChecker.end(req.file.buffer);
-});
+
+  req.originalDirectory = directory;
+  next();
+// Before closing this function, create any implied folders
+}, createImpliedFolders);
 
 // Create unprotected route to retrieve "Welcome!"
 app.get('/welcome', function(req, res) {
@@ -314,263 +299,31 @@ app.get('/authcheck', authenticate, function(req, res) {
 
 // Create protected route to list all files in bucket, user default
 // Modified from https://cloud.google.com/nodejs/docs/reference/storage/1.4.x/Bucket#getFiles
-app.get('/list*', authenticate, function(req, res) {
-  var email = req.user.email;
-
-  // Parameters include prefix and bucket:
-  // Prefix MUST be a directory
-  var prefix = req.params[0];
-  if (prefix.length === 0) {
-    prefix = '';
-  } else {
-    prefix = prefix.slice(1) + '/';
-  };
-
-  // If bucket is not specified, use the user's bucket
-  var bucketName = req.query.bucket;
-  if (!bucketName) {
-    bucketName = gcb.getHash(email);
-  };
-
-  storage
-    .bucket(bucketName)
-    .getFiles({prefix: prefix})
-    .then(results => {
-      const files = results[0];
-
-      // If no files found, return 404 error code
-      if (files.length === 0) {
-        res.status(404).json({
-          success: false,
-          msg: "No files found"
-        })
-        // res.status(404).end("No files found\n");
-      } else {
-        // Else loop through all files
-
-        var fileList = [];
-        files.forEach(file => { // There is no "end" event for forEach()
-                                // so we use length matching to determine "end" instead.
-          fileList.push({
-            name: file.name,
-            metadata: file.metadata,
-          });
-
-          if (fileList.length === files.length) {
-            res.status(200).json({
-              success: true,
-              prefix: prefix,
-              results: fileList
-            });
-          };
-        });
-
-        // res.write(`Successfully shared files in "${subdir}" with ${recipientEmail}\n`);
-        // res.write("Listing files shared:\n");
-        // files.forEach(file => {
-        //   res.write(`https://storage.cloud.google.com/${bucketName}/${file.name}` + '\n');
-        //   file.acl.readers.addUser(recipientEmail, function(err, aclObject) {});
-        // });
-        // res.status(200).end();
-
-      };
+app.get('/list/*', authenticate, getBucketName, getDirectory, listDirectories,
+listFiles, function(req, res) {
+  if (req.fileList.length + req.directoryList.length === 0) {
+    res.status(404).json({
+      success: false,
+      msg: "No files/directories found"
     })
-    .catch(err => {
-      console.error('ERROR:', err);
-      res.status(404).json({
-        success: false,
-        msg: err
-      })
-    });
-});
-
-// Create protected route to list all files in bucket, user default
-// Identical to /list route except parameter does not need to specify folder
-app.get('/search*', authenticate, function(req, res) {
-  var email = req.user.email;
-
-  // Parameters include prefix and bucket:
-  // Prefix MUST be a directory
-  var prefix = req.params[0];
-  if (prefix.length === 0) {
-    prefix = '';
-  } else {
-    prefix = prefix.slice(1);
   };
 
-  // If bucket is not specified, use the user's bucket
-  var bucketName = req.query.bucket;
-  if (!bucketName) {
-    bucketName = gcb.getHash(email);
-  };
-
-  storage
-    .bucket(bucketName)
-    .getFiles({prefix: prefix})
-    .then(results => {
-      const files = results[0];
-
-      // If no files found, return 404 error code
-      if (files.length === 0) {
-        res.status(404).json({
-          success: false,
-          msg: "No files found"
-        })
-        // res.status(404).end("No files found\n");
-      } else {
-        // Else loop through all files
-
-        var fileList = [];
-        files.forEach(file => { // There is no "end" event for forEach()
-                                // so we use length matching to determine "end" instead.
-          fileList.push({
-            name: file.name,
-            metadata: file.metadata,
-          });
-
-          if (fileList.length === files.length) {
-            res.status(200).json({
-              success: true,
-              prefix: prefix,
-              results: fileList
-            });
-          };
-        });
-
-        // res.write(`Successfully shared files in "${subdir}" with ${recipientEmail}\n`);
-        // res.write("Listing files shared:\n");
-        // files.forEach(file => {
-        //   res.write(`https://storage.cloud.google.com/${bucketName}/${file.name}` + '\n');
-        //   file.acl.readers.addUser(recipientEmail, function(err, aclObject) {});
-        // });
-        // res.status(200).end();
-
-      };
-    })
-    .catch(err => {
-      console.error('ERROR:', err);
-      res.status(404).json({
-        success: false,
-        msg: err
-      })
-    });
-});
-
-// Create protected route to share all files in a given directory with
-// specified other user
-// Modified from https://cloud.google.com/nodejs/docs/reference/storage/1.4.x/Acl#readers
-// and https://cloud.google.com/nodejs/docs/reference/storage/1.4.x/Iam
-app.get('/share*', authenticate, function(req, res) {
-  var email = req.user.email;
-  var bucketName = gcb.getHash(email);
-  var bucket = storage.bucket(bucketName);
-  var recipientEmail = req.query.recipient;
-
-  // Parameters include prefix and bucket:
-  // Prefix MUST be a directory
-  var prefix = req.params[0];
-  if (prefix.length === 0) {
-    prefix = DATA_PREFIX;
-  } else {
-    prefix = prefix.slice(1) + '/';
-  };
-
-  // Assign the given email to the ACL role of bucket object viewer
-  storage
-    .bucket(bucketName)
-    .getFiles({prefix: prefix}) // only share files in the specified subdir
-    .then(results => {
-      const files = results[0];
-
-      // If no files found, return 404 error code
-      if (files.length === 0) {
-        res.status(404).json({
-          success: false,
-          msg: "No files found"
-        })
-        // res.status(404).end("No files found\n");
-      } else {
-        // Else loop through all files
-
-        var fileList = [];
-        files.forEach(file => { // There is no "end" event for forEach()
-                                // so we use length matching to determine "end" instead.
-
-          // Give READ access to recipient
-          file.acl.readers.addUser(recipientEmail, function(err, aclObject) {
-            console.error(err);
-          });
-
-          fileList.push({
-            name: file.name,
-            metadata: file.metadata,
-          });
-
-          if (fileList.length === files.length) {
-            res.status(200).json({
-              success: true,
-              recipient: recipientEmail,
-              folder: prefix,
-              contents: fileList
-            });
-          };
-        });
-
-        // res.write(`Successfully shared files in "${subdir}" with ${recipientEmail}\n`);
-        // res.write("Listing files shared:\n");
-        // files.forEach(file => {
-        //   res.write(`https://storage.cloud.google.com/${bucketName}/${file.name}` + '\n');
-        //   file.acl.readers.addUser(recipientEmail, function(err, aclObject) {});
-        // });
-        // res.status(200).end();
-
-      };
-
-    })
-    .catch(err => {
-      console.error('ERROR:', err);
-      res.status(404).json({
-        success: false,
-        msg: err
-      });
-    });
-
-  // For now, do not give "object lister" IAM role when sharing any files
-  // // Gets and updates the bucket's IAM policy
-  // const members = [`user:${recipientEmail}`];
-  // const roleLister = ROLE_OBJECT_LISTER;
-  // bucket.iam
-  //   .getPolicy()
-  //   .then(results => {
-  //     const policy = results[0];
-  //
-  //     // Adds the new roles to the bucket's IAM policy
-  //     policy.bindings.push({
-  //       role: roleLister,
-  //       members: members,
-  //     });
-  //
-  //     // Updates the bucket's IAM policy
-  //     return bucket.iam.setPolicy(policy);
-  //   })
-  //   .then(() => {
-  //     console.log(
-  //       `Added the following member(s) with role ${roleLister} to ${bucketName}:`
-  //     );
-  //     members.forEach(member => {
-  //       console.log(`  ${member}`);
-  //     });
-  //   })
-  //   .catch(err => {
-  //     console.error('ERROR:', err);
-  //   });
+  res.status(200).json({
+    success: true,
+    directory: req.directory,
+    results: {
+      directories: req.directoryList,
+      files: req.fileList
+    }
+  });
 });
 
 // List files for which the recipient has READ or WRITE access
-app.get('/acl', authenticate, function(req, res) {
-  var email = req.user.email;
-  var bucketName = gcb.getHash(email);
-  var recipient = 'rogerthatdumborat@gmail.com'; // FOR NOW, RECIPIENT IS ROGERTHATDUMBORAT
+app.get('/list-acl/*', authenticate, getBucketName, getDirectory, function(req, res) {
+  // var recipient = 'rogerthatdumborat@gmail.com'; // FOR NOW, RECIPIENT IS ROGERTHATDUMBORAT
+  var bucketName = req.bucketName;
+  var directory = req.directory;
+  var recipient = req.query.recipient;
 
   const options = {
     // Specify the user
@@ -580,11 +333,21 @@ app.get('/acl', authenticate, function(req, res) {
   // Gets the ACL for the bucket for the recipient
   storage
     .bucket(bucketName)
-    .getFiles()
+    .getFiles({
+      prefix: directory,
+      delimiter: '/'
+    })
     .then(results => {
       const files = results[0];
-      var i = 0;
 
+      if (files.length === 0) {
+        res.status(404).json({
+          success: false,
+          msg: "No files/directories found"
+        })
+      };
+
+      var i = 0;
       files.forEach(file => { // There is no "end" event for forEach()
                               // so we use a counter to determine "end" instead.
         const filename = file.name;
@@ -615,14 +378,40 @@ app.get('/acl', authenticate, function(req, res) {
     });
   });
 
-// app.get('/list-buckets', authenticate, function(req, res) {
-//   request({
-//     uri: 'https://www.googleapis.com/storage/v1/b',
-//     qs: {
-//
-//     }
-//   })
-// };
+// TO DO: only list buckets to which the requester has IAM viewer privileges
+app.get('/list-buckets', authenticate, function(req, res) {
+  storage.getBuckets()
+    .then( results => {
+      var buckets = results[0];
+
+      // Not sure if this would ever happen though
+      if (buckets.length === 0) {
+        res.status(404).json({
+          success: false,
+          msg: "No buckets found"
+        })
+      };
+
+      var i = 0;
+      var bucketList = [];
+      buckets.forEach(bucket => { // There is no "end" event for forEach()
+                                  // so we use a counter to determine "end" instead.
+        bucketList.push(bucket.name);
+
+        i = i + 1;
+
+        if(i === buckets.length) {
+          res.status(200).json({
+            success: true,
+            buckets: bucketList
+          });
+        };
+      });
+    })
+    .catch(err => {
+      console.error("ERROR in list-buckets:", err)
+    });
+});
 
 // Gets and displays the bucket's IAM policy
 app.get('/acl-bucket', authenticate, function(req, res) {
@@ -652,29 +441,20 @@ app.get('/acl-bucket', authenticate, function(req, res) {
     });
 });
 
-// Revoke access to all files in a given subdirectory from a specified other user
+
+// Create protected route to share all files in a given directory with
+// specified other user
 // Modified from https://cloud.google.com/nodejs/docs/reference/storage/1.4.x/Acl#readers
 // and https://cloud.google.com/nodejs/docs/reference/storage/1.4.x/Iam
-app.get('/revoke*', authenticate, function(req, res) {
-  var email = req.user.email;
-  var bucketName = gcb.getHash(email);
-  var bucket = storage.bucket(bucketName);
-  // var recipientEmail = req.body;
+app.get('/share/*', authenticate, getBucketName, getDirectory, function(req, res) {
+  var bucketName = req.bucketName;
+  var directory = req.directory;
   var recipientEmail = req.query.recipient;
-
-  // Parameters include prefix and bucket:
-  // Prefix MUST be a directory
-  var prefix = req.params[0];
-  if (prefix.length === 0) {
-    prefix = DATA_PREFIX;
-  } else {
-    prefix = prefix.slice(1) + '/';
-  };
 
   // Assign the given email to the ACL role of bucket object viewer
   storage
     .bucket(bucketName)
-    .getFiles({prefix: prefix}) // only share files in the specified subdir
+    .getFiles({prefix: directory}) // only share files in the specified subdir
     .then(results => {
       const files = results[0];
 
@@ -684,10 +464,98 @@ app.get('/revoke*', authenticate, function(req, res) {
           success: false,
           msg: "No files found"
         })
-        // res.status(404).end("No files found\n");
-      } else {
-        // Else loop through all files
 
+      // Else loop through all files
+      } else {
+        var fileList = [];
+        files.forEach(file => { // There is no "end" event for forEach()
+                                // so we use length matching to determine "end" instead.
+
+          // Give READ access to recipient
+          file.acl.readers.addUser(recipientEmail, function(err, aclObject) {
+            console.error(err);
+          });
+
+          fileList.push({
+            name: file.name,
+            metadata: file.metadata,
+          });
+
+          if (fileList.length === files.length) {
+            res.status(200).json({
+              success: true,
+              recipient: recipientEmail,
+              directory: directory,
+              contents: fileList
+            });
+          };
+        });
+
+      };
+
+    })
+    .catch(err => {
+      console.error('ERROR:', err);
+      res.status(404).json({
+        success: false,
+        msg: err
+      });
+    });
+
+  // For now, do not give "object lister" IAM role when sharing any files
+  // // Gets and updates the bucket's IAM policy
+  // const members = [`user:${recipientEmail}`];
+  // bucket.iam
+  //   .getPolicy()
+  //   .then(results => {
+  //     const policy = results[0];
+  //
+  //     // Adds the new roles to the bucket's IAM policy
+  //     policy.bindings.push({
+  //       role: ROLE_COLLABORATOR,
+  //       members: members,
+  //     });
+  //
+  //     // Updates the bucket's IAM policy
+  //     return bucket.iam.setPolicy(policy);
+  //   })
+  //   .then(() => {
+  //     console.log(
+  //       `Added the following member(s) with role ${ROLE_COLLABORATOR} to ${bucketName}:`
+  //     );
+  //     members.forEach(member => {
+  //       console.log(`  ${member}`);
+  //     });
+  //   })
+  //   .catch(err => {
+  //     console.error('ERROR:', err);
+  //   });
+});
+
+// Revoke access to all files in a given subdirectory from a specified other user
+// Modified from https://cloud.google.com/nodejs/docs/reference/storage/1.4.x/Acl#readers
+// and https://cloud.google.com/nodejs/docs/reference/storage/1.4.x/Iam
+app.get('/revoke/*', authenticate, getBucketName, getDirectory, function(req, res) {
+  var bucketName = req.bucketName;
+  var directory = req.directory;
+  var recipientEmail = req.query.recipient;
+
+  // De-assign the given email to the ACL role of bucket object viewer
+  storage
+    .bucket(bucketName)
+    .getFiles({prefix: prefix}) // only revoke files in the specified subdir
+    .then(results => {
+      const files = results[0];
+
+      // If no files found, return 404 error code
+      if (files.length === 0) {
+        res.status(404).json({
+          success: false,
+          msg: "No files found"
+        })
+
+      // Else loop through all files
+      } else {
         var fileList = [];
         files.forEach(file => { // There is no "end" event for forEach()
                                 // so we use length matching to determine "end" instead.
@@ -722,14 +590,13 @@ app.get('/revoke*', authenticate, function(req, res) {
   // For now, do not give "object lister" IAM role when sharing any files
   // // Gets and updates the bucket's IAM policy
   // const members = [`user:${recipientEmail}`];
-  // const roleLister = ROLE_OBJECT_LISTER;
   // bucket.iam
   //   .getPolicy()
   //   .then(results => {
   //     const policy = results[0];
   //
   //     // Finds and updates the appropriate role-member group
-  //     const index = policy.bindings.findIndex(role => role.role === roleLister);
+  //     const index = policy.bindings.findIndex(role => role.role === ROLE_COLLABORATOR);
   //     let role = policy.bindings[index];
   //     if (role) {
   //       role.members = role.members.filter(
@@ -752,7 +619,7 @@ app.get('/revoke*', authenticate, function(req, res) {
   //   })
   //   .then(() => {
   //     console.log(
-  //       `Removed the following member(s) with role ${roleLister} from ${bucketName}:`
+  //       `Removed the following member(s) with role ${ROLE_COLLABORATOR} from ${bucketName}:`
   //     );
   //     members.forEach(member => {
   //       console.log(`  ${member}`);
@@ -814,16 +681,14 @@ app.get('/download/*', authenticate, function(req, res) {
 //////////////////////
 
 function serialize(req, res, next) {
-  // console.log("Entered serialize");
   req.user = {
     id: req.user.id,
     email: req.user.emails[0].value
   };
   next();
-}
+};
 
 function generateToken(req, res, next) {
-  // console.log("Entered generateToken");
   req.token = jwt.sign({
     id: req.user.id,
     email: req.user.email
@@ -831,14 +696,14 @@ function generateToken(req, res, next) {
     expiresIn: TOKEN_TIME
   });
   next();
-}
+};
 
 function respond(req, res) {
   res.status(200).json({
     user: req.user,
     token: req.token
   });
-}
+};
 
 function saveToken(req, res) {
   // Save the JWT as a filename in the user's bucket (TEMPORARY SOL'N)
@@ -862,9 +727,9 @@ function saveToken(req, res) {
   jwtStream.end(req.token);
 };
 
+// Save the user ID in a file accessible only to project owners/admins
+// TO DO: save to a different, more permanent storage destination
 function recordUser(req, res, next) {
-  // Save the user ID in a file accessible only to project owners/admins
-  // console.log("Entered recordUser");
   var email = req.user.email;
   var bucketName = '3c43a972dbc5046b8eb0fdb4f2cffadd';
   var readStream = storage
@@ -888,6 +753,202 @@ function recordUser(req, res, next) {
   writeStream.write(email + '\n');
 };
 
+// Function to make folders if upload specifies a directory structure that
+// includes folders that do not currently exist as objects.
+// Requires request object containing "originalDirectory" field.
+async function createImpliedFolders(req, res) {
+  var currentDirectory = req.directory;
+  console.log("Checking directory: " + currentDirectory);
+
+  // Base case
+  if (!currentDirectory) {
+    console.log("Creating all implied folders in " + req.originalDirectory);
+
+  // Recursive step
+  } else {
+    var folder = storage
+      .bucket(req.bucketName)
+      .file(currentDirectory);
+
+    folder
+      .exists()
+      .then( data => {
+        var exists = data[0];
+        console.log("Exists?: " + exists);
+        // Create a directory object only if it does not already exist
+        if (!exists) {
+          folder.createWriteStream({
+            metadata: {
+              contentType: DIRECTORY_CONTENT_TYPE
+            }
+          })
+            .on('end', function() {
+              console.log('Created Implied Folder: ' + req.bucketName + '/' + currentDirectory);
+            })
+            .end('');
+        };
+      })
+      .catch( err => {
+        console.error('createImpliedFolders ERROR: ', err);
+      });
+
+    // Run the recursion
+    var sliceIndex = currentDirectory.slice(0,-1).lastIndexOf("/") + 1;
+    var nextDirectory = currentDirectory.slice(0, sliceIndex);
+    createImpliedFolders({
+      directory: nextDirectory,
+      originalDirectory: req.originalDirectory,
+      bucketName: req.bucketName
+    }, res);
+  };
+};
+
+async function listDirectories(req, res, next) {
+  var bucketName = req.bucketName;
+  var directory = req.directory;
+  var directoryLevel = req.directory.split('/').length;
+
+  storage
+    .bucket(bucketName)
+    .getFiles({
+      prefix: directory,
+      // delimiter:'/'
+    })
+    .then(results => {
+      const files = results[0];
+
+      // If no files found, just callback
+      if (files.length === 0) {
+        next();
+
+      // Else loop through all files
+      } else {
+        var i = 0;
+        var fileList = [];
+        files.forEach(file => { // There is no "end" event for forEach()
+                                // so we use a counter to determine "end" instead.
+          // Must meet two conditions to be a first-order directory
+          // 1. metadata.contentType must be DIRECTORY_CONTENT_TYPE
+          if(file.metadata.contentType === DIRECTORY_CONTENT_TYPE) {
+            // 2. the directory's nestedness level must be exactly one greater
+            //    than the directory specified in the request parameters
+            if(file.name.split('/').length === directoryLevel + 1) {
+              fileList.push({
+                name: file.name,
+                metadata: file.metadata,
+              });
+            };
+          };
+
+          i = i + 1;
+
+          if (i === files.length) {
+            req.directoryList = fileList;
+            next();
+          };
+        });
+
+      };
+    })
+    .catch(err => {
+      console.error('ERROR:', err);
+      res.status(404).json({
+        success: false,
+        msg: err
+      })
+    });
+};
+
+async function listFiles(req, res, next) {
+  var bucketName = req.bucketName;
+  var directory = req.directory;
+
+  storage
+    .bucket(bucketName)
+    .getFiles({
+      prefix: directory,
+      delimiter:'/'
+    })
+    .then(results => {
+      const files = results[0];
+
+      // If no files found, just callback
+      if (files.length === 0) {
+        next();
+
+      // Else loop through all files
+      } else {
+        var i = 0;
+        var fileList = [];
+        files.forEach(file => { // There is no "end" event for forEach()
+                                // so we use a counter to determine "end" instead.
+          // Filter out directories
+          if(file.metadata.contentType != DIRECTORY_CONTENT_TYPE) {
+            fileList.push({
+              name: file.name,
+              metadata: file.metadata,
+            });
+          };
+
+          i = i + 1;
+
+          if (i === files.length) {
+            req.fileList = fileList;
+            next();
+          };
+        });
+
+      };
+    })
+    .catch(err => {
+      console.error('ERROR:', err);
+      res.status(404).json({
+        success: false,
+        msg: err
+      })
+    });
+};
+
+// Function to get bucket name associated with JWT
+// If bucket is not specified, use the user's bucket
+function getBucketName(req, res, next) {
+  if (req.params[0].length != 0) {
+    req.bucketName = req.params[0];
+  } else {
+    req.bucketName = gcb.getHash(req.user.email);
+  };
+  next();
+};
+
+// Function to parse directory from query parameter
+// by appending '/' to param if it is not already there
+function getDirectory(req, res, next) {
+  var param = req.query.directory;
+  if (param) {
+    if(param.slice(-1) != '/') {
+      req.directory = param + '/';
+    } else {
+      req.directory = param;
+    }
+  } else {
+    req.directory = DATA_PREFIX;
+  };
+  next();
+};
+
+// Function for upload method to get filename from query parameter,
+// or, if undefined, use file's original name.
+// Replaces '/' with FILENAME_DELIMITER_SUB
+function getFileName(req, res, next) {
+  var param = req.query.filename;
+  if (param) {
+    req.filename = param.replace('/', FILENAME_DELIMITER_SUB);
+  } else {
+    req.filename = req.file.originalname.replace('/', FILENAME_DELIMITER_SUB);
+  };
+  next();
+}
+
 // // Function to check for numeric values
 // function numeric(string) {
 //   if(string.match(REGEX_NUMERIC)) {
@@ -899,3 +960,77 @@ function recordUser(req, res, next) {
 //   }
 // };
 //
+
+
+
+
+
+
+////////////////////
+// ROUTES IN BETA //
+////////////////////
+
+// Identical to /list route except parameter does not need to specify folder
+app.get('/search*', authenticate, getBucketName, function(req, res) {
+  var bucketName = req.bucketName;
+
+  // Parameters include prefix:
+  // Prefix NEED NOT be a directory
+  var prefix = req.params[0];
+  if (prefix.length === 0) {
+    prefix = '';
+  } else {
+    prefix = prefix.slice(1);
+  };
+
+  storage
+    .bucket(bucketName)
+    .getFiles({prefix: prefix})
+    .then(results => {
+      const files = results[0];
+
+      // If no files found, return 404 error code
+      if (files.length === 0) {
+        res.status(404).json({
+          success: false,
+          msg: "No files found"
+        });
+
+      // Else loop through all files
+      } else {
+
+        var fileList = [];
+        files.forEach(file => { // There is no "end" event for forEach()
+                                // so we use length matching to determine "end" instead.
+          fileList.push({
+            name: file.name,
+            metadata: file.metadata,
+          });
+
+          if (fileList.length === files.length) {
+            res.status(200).json({
+              success: true,
+              prefix: prefix,
+              results: fileList
+            });
+          };
+        });
+
+        // res.write(`Successfully shared files in "${subdir}" with ${recipientEmail}\n`);
+        // res.write("Listing files shared:\n");
+        // files.forEach(file => {
+        //   res.write(`https://storage.cloud.google.com/${bucketName}/${file.name}` + '\n');
+        //   file.acl.readers.addUser(recipientEmail, function(err, aclObject) {});
+        // });
+        // res.status(200).end();
+
+      };
+    })
+    .catch(err => {
+      console.error('ERROR:', err);
+      res.status(404).json({
+        success: false,
+        msg: err
+      })
+    });
+});
