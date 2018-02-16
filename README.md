@@ -11,21 +11,35 @@ which can be retrieved by first authenticating via the browser at the
 application website, e.g. glowing-palace-179100.appspot.com, and then
 navigating to the file "system/jwt".
 
-Verify that the JWT is not expired (replace [JWT] wherever you see it with your own JWT)
-
-`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/authcheck"`
-
 Example JWT (for demonstrating what a JWT looks like; will return Unauthorized error)
 
 `curl -H "Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJPbmxpbmUgSldUIEJ1aWxkZXIiLCJpYXQiOjE1MTYxNDA1MjcsImV4cCI6MTU0NzY3NjUyNywiYXVkIjoiIiwic3ViIjoiIiwiaWQiOiI0MzIxNTA4MzI1OTEwOCIsImVtYWlsIjoidGVzdDEyM0BnbWFpbC5jb20ifQ.TGZeNm0p-V6229tuiXxZtT_W4SMjm3CX31s4KHeqKZo" "https://glowing-palace-179100.appspot.com/authcheck"`
 
-## Listing files
+## Get bucket name
 
-List files in your bucket, optionally filtering by a prefix
+Get the bucket name and email associated with your JWT.
 
-`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/list/"`
+`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/bucket-name"`
 
 Response:
+
+```
+{
+  "email": [yourEmail],
+  "bucketName": [bucketName]
+}
+```
+
+## Listing files
+
+List files and subdirectories within a specified directory of a specified bucket.
+
+If no directory is specified, uses the `aq-data/` directory.
+
+`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/list/[bucketName]"`
+
+Response:
+
 ```
 {
   "success": true,
@@ -61,39 +75,27 @@ Response:
 
 List only files within a specified directory, e.g. "test"
 
-`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/list/test"`
-
-List files in another user's bucket using the `bucket` parameter *(which will eventually be replaced by the `user` parameter)*
-
-`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/list?bucket=[bucketName]"`
-
-## Search files *(BETA feature)*
-
-List files matching a specified prefix, e.g. “test”:
-
-`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/search/test"`
-
-Response is in the same format as in `/list` route.
+`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/list/[bucketName]?directory=test"`
 
 
 ## Uploading files
 
-Upload a tab-delimited .txt file to your project folder:
+Upload a tab-delimited .txt file to your project folder, and converts it into a JSON file.
 
-Note: must be tab-delimited and have valid header (i.e. first column), or else it will be rejected.
+Note: Upload file must be tab-delimited and have valid header (i.e. first column), or else it will be rejected.
 
-`curl -H "Authorization: Bearer [JWT]" -F "file=@/Users/[me]/[path-to]/[file].txt" "https://glowing-palace-179100.appspot.com/upload"`
+`curl -H "Authorization: Bearer [JWT]" -F "file=@/Users/[me]/[path-to]/[file].txt" "https://glowing-palace-179100.appspot.com/upload/aq-data/[filename].txt"`
 
 Response for successful upload:
 
 ```
 {
   "success": true,
-  "filepath": "upload-valid.txt"
+  "filepath": "[filename].txt"
 }
 ```
 
-Response for failed upload (suppose that every value must be numeric, and that non-numeric values would trigger an error):
+In future updates, upload method will also check to make sure that values are all valid. If not, responds with failed upload. Suppose, for instance, that all values are required to be numeric:
 
 ```
 {
@@ -115,20 +117,21 @@ Response for failed upload (suppose that every value must be numeric, and that n
 
 ## Downloading files
 
-Download a file from your bucket to a local destination:
+Download a file from your bucket to a local destination.
 
-
-`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/download/data/upload-valid.txt"`
+`
+curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/download/[bucketName]/aq-data/alice.txt"`
 
 Response:
 
 ```
-
+Alice was beginning to get very tired of sitting by her sister on the bank, and of having nothing to do
+...
 ```
 
 To save this to a local file, simply pipe the output to a local destination:
 
-`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/download/data/upload-valid.txt" > [my/localpath/file.txt]`
+`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/download/[bucketName]/aq-data/alice.txt" > [my/localpath/file.txt]`
 
 
 ## Sharing files
@@ -138,23 +141,23 @@ with a specified collaborator or Google Group.
 
 Can specify a folder, e.g. "aq-data”:
 
-`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/share/aq-data?recipient=test123@gmail.com"`
+`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/share/[bucketName]?directory=aq-data&recipient=[recipientEmail]@gmail.com"`
 
 Response if sharing is successful:
 
 ```
 {
   "success": true,
-  "recipient": "rogerthatdumborat@gmail.com",
-  "folder": "aq-data",
+  "recipient": "[recipientEmail]@gmail.com",
+  "directory": "aq-data",
   "contents": [
     {
-      "name": "aq-data/upload-invalid.txt",
+      "name": "aq-data/[filename].txt",
       "metadata": {
         "kind": "storage#object",
-        "id": "3c43a972dbc5046b8eb0fdb4f2cffadd/aq-data/upload-invalid.txt/1517864121551081", "selfLink": "https://www.googleapis.com/storage/v1/b/3c43a972dbc5046b8eb0fdb4f2cffadd/o/aq-data%2Fupload-invalid.txt",
-        "name": "aq-data/upload-invalid.txt",
-        "bucket": "3c43a972dbc5046b8eb0fdb4f2cffadd",
+        "id": "[bucketName]/aq-data/[filename]/1517864121551081", "selfLink": "https://www.googleapis.com/storage/v1/b/[bucketName]/o/aq-data%2F[filename]",
+        "name": "aq-data/[filename]",
+        "bucket": "[bucketName]",
         "generation": "1517864121551081",
         "metageneration":"1",
         "contentType": "application/json",
@@ -164,7 +167,7 @@ Response if sharing is successful:
         "timeStorageClassUpdated": "2018-02-05T20:55:21.531Z",
         "size": "630",
         "md5Hash": "mTmvHjshzEjlmKMt4ddMTQ==",
-        "mediaLink": "https://www.googleapis.com/download/storage/v1/b/3c43a972dbc5046b8eb0fdb4f2cffadd/o/aq-data%2Fupload-invalid.txt?generation=1517864121551081&alt=media",
+        "mediaLink": "https://www.googleapis.com/download/storage/v1/b/[bucketName]/o/aq-data%2F[filename]?generation=1517864121551081&alt=media",
         "crc32c": "BEiE2Q==",
         "etag":"COmRob7Uj9kCEAE="
       }
@@ -178,11 +181,11 @@ Response if sharing is successful:
 
 Or a sub-folder, e.g. "aq-data/test”:
 
-`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/share/aq-data/test?recipient=test123@gmail.com"`
+`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/share/aq-data/test?recipient=[recipientEmail]@gmail.com"`
 
 Or a file, e.g. "data/folder/test/test1.txt”:
 
-`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/share/aq-data/test/test1.txt?recipient=test123@gmail.com"`
+`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/share/aq-data/test/test1.txt?recipient=[recipientEmail]@gmail.com"`
 
 
 ## Revoke sharing privileges
@@ -193,12 +196,12 @@ Response format is same as that of "/share" route.
 
 Revoke all access for the specified user:
 
-`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/revoke/aq-data?recipient=test123@gmail.com"`
+`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/revoke/aq-data?recipient=[recipientEmail]@gmail.com"`
 
 Or a sub-folder, e.g. "aq-data/test”:
 
-`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/revoke/aq-data/test?recipient=test123@gmail.com"`
+`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/revoke/aq-data/test?recipient=[recipientEmail]@gmail.com"`
 
 Or a file, e.g. "data/folder/test/test1.txt”:
 
-`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/revoke/aq-data/test/test1.txt?recipient=test123@gmail.com"`
+`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/revoke/aq-data/test/test1.txt?recipient=[recipientEmail]@gmail.com"`
