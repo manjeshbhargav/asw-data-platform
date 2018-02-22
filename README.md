@@ -26,7 +26,7 @@ Response:
 ```
 {
   "email": [yourEmail],
-  "bucketName": [bucketName]
+  "bucket": [bucketName]
 }
 ```
 
@@ -43,55 +43,72 @@ Response:
 ```
 {
   "success": true,
-  "prefix": "",
-  "results": [
-    {
-      "name": "test1.txt",
-      "metadata": {
-        "kind": "storage#object",
-        "id": "[bucketName]/test1.txt/1513026837758052",
-        "selfLink": "https://www.googleapis.com/storage/v1/b/[bucketName]/o/test1.txt",
+  "bucket": [bucketName]
+  "directory": "",
+  "results": {
+    "directories": [
+      "testfolder",
+      "folder1"
+    ],
+    "files": [
+      {
         "name": "test1.txt",
-        "bucket": "[bucketName]",
-        "generation": "1513026837758052",
-        "metageneration": "6",
-        "timeCreated": "2017-12-11T21:13:57.742Z",
-        "updated": "2017-12-28T22:33:22.435Z",
-        "storageClass": "STANDARD",
-        "timeStorageClassUpdated": "2017-12-11T21:13:57.742Z",
-        "size": "13",
-        "md5Hash": "yJfRQQr48sdPuhGx21Eeng==",
-        "mediaLink": "https://www.googleapis.com/download/storage/v1/b/[bucketName]/o/test1.txt?generation=1513026837758052&alt=media",
-        "crc32c": "nISA2A==",
-        "etag": "COSAzZnwgtgCEAY="
-      }
-    },
+        "metadata": {
+          "kind": "storage#object",
+          "id": "[bucketName]/test1.txt/1513026837758052",
+          "selfLink": "https://www.googleapis.com/storage/v1/b/[bucketName]/o/test1.txt",
+          "name": "test1.txt",
+          "bucket": "[bucketName]",
+          "generation": "1513026837758052",
+          "metageneration": "6",
+          "timeCreated": "2017-12-11T21:13:57.742Z",
+          "updated": "2017-12-28T22:33:22.435Z",
+          "storageClass": "STANDARD",
+          "timeStorageClassUpdated": "2017-12-11T21:13:57.742Z",
+          "size": "13",
+          "md5Hash": "yJfRQQr48sdPuhGx21Eeng==",
+          "mediaLink": "https://www.googleapis.com/download/storage/v1/b/[bucketName]/o/test1.txt?generation=1513026837758052&alt=media",
+          "crc32c": "nISA2A==",
+          "etag": "COSAzZnwgtgCEAY="
+        }
+      },
 
-  ...
+      ...
 
-  ]
+    ]
+
+  }
 }
 ```
 
-List only files within a specified directory, e.g. "test"
+List only files within a specified directory, e.g. "testfolder"
 
-`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/list/[bucketName]?directory=test"`
+`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/list/[bucketName]?directory=testfolder"`
 
 
 ## Uploading files
 
-Upload a tab-delimited .txt file to your project folder, and converts it into a JSON file.
+Upload a tab-delimited .txt file to your project folder, and convert it into a JSON file.
 
 Note: Upload file must be tab-delimited and have valid header (i.e. first column), or else it will be rejected.
 
-`curl -H "Authorization: Bearer [JWT]" -F "file=@/Users/[me]/[path-to]/[file].txt" "https://glowing-palace-179100.appspot.com/upload/aq-data/[filename].txt"`
+`curl -H "Authorization: Bearer [JWT]" -F "file=@/Users/[me]/[path-to]/[file].txt" "https://glowing-palace-179100.appspot.com/upload/[filename].txt"`
 
 Response for successful upload:
 
 ```
 {
   "success": true,
-  "filepath": "[filename].txt"
+  "filename": "[filename].txt"
+}
+```
+
+Response for failed upload due to invalid header:
+
+```
+{
+  "success": false,
+  "msg": 'Upload failed: Header does not contain required set of column names.',
 }
 ```
 
@@ -119,8 +136,11 @@ In future updates, upload method will also check to make sure that values are al
 
 Download a file from your bucket to a local destination.
 
-`
-curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/download/[bucketName]/aq-data/alice.txt"`
+`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/download/[bucketName]/[filename]"`
+
+For example, consider this request:
+
+`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/download/[bucketName]/alice.txt"`
 
 Response:
 
@@ -131,46 +151,30 @@ Alice was beginning to get very tired of sitting by her sister on the bank, and 
 
 To save this to a local file, simply pipe the output to a local destination:
 
-`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/download/[bucketName]/aq-data/alice.txt" > [my/localpath/file.txt]`
+`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/download/[bucketName]/alice.txt" > [my/localpath/file.txt]`
 
 
 ## Sharing files
 
-Share files matching a specified prefix (i.e. could specify a "folder")
+Share a single file or all files within a directory
 with a specified collaborator or Google Group.
 
-Can specify a folder, e.g. "aq-data”:
+`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/share/[bucketName]/[directoryOrFile]?recipient=[recipient]@gmail.com"`
 
-`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/share/[bucketName]?directory=aq-data&recipient=[recipientEmail]@gmail.com"`
+Note: `recipient` parameter *must* be a Gmail address.
 
 Response if sharing is successful:
 
 ```
 {
   "success": true,
-  "recipient": "[recipientEmail]@gmail.com",
-  "directory": "aq-data",
-  "contents": [
+  "recipient": "[recipient]@gmail.com",
+  "sharedItem": [sharedItem]
+  "sharedIsFile": [true/false]
+  "files": [
     {
-      "name": "aq-data/[filename].txt",
-      "metadata": {
-        "kind": "storage#object",
-        "id": "[bucketName]/aq-data/[filename]/1517864121551081", "selfLink": "https://www.googleapis.com/storage/v1/b/[bucketName]/o/aq-data%2F[filename]",
-        "name": "aq-data/[filename]",
-        "bucket": "[bucketName]",
-        "generation": "1517864121551081",
-        "metageneration":"1",
-        "contentType": "application/json",
-        "timeCreated": "2018-02-05T20:55:21.531Z",
-        "updated": "2018-02-05T20:55:21.531Z",
-        "storageClass": "STANDARD",
-        "timeStorageClassUpdated": "2018-02-05T20:55:21.531Z",
-        "size": "630",
-        "md5Hash": "mTmvHjshzEjlmKMt4ddMTQ==",
-        "mediaLink": "https://www.googleapis.com/download/storage/v1/b/[bucketName]/o/aq-data%2F[filename]?generation=1517864121551081&alt=media",
-        "crc32c": "BEiE2Q==",
-        "etag":"COmRob7Uj9kCEAE="
-      }
+      "name": "[filename]",
+      "url": "https://storage.cloud.google.com/[bucketName]/aq-data/[filename]"
     },
 
   ...
@@ -179,29 +183,30 @@ Response if sharing is successful:
 }
 ```
 
-Or a sub-folder, e.g. "aq-data/test”:
+Share a subdirectory, e.g. "testfolder”:
 
-`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/share/aq-data/test?recipient=[recipientEmail]@gmail.com"`
+`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/share/testfolder?recipient=[recipient]@gmail.com"`
 
-Or a file, e.g. "data/folder/test/test1.txt”:
+Share a single file, e.g. "data/folder/test1.txt”:
 
-`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/share/aq-data/test/test1.txt?recipient=[recipientEmail]@gmail.com"`
+`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/share/data/folder/test1.txt?recipient=[recipient]@gmail.com"`
 
 
-## Revoke sharing privileges
+## Revoke access privileges
 
-Revoke sharing privileges from a specified collaborator.
+Revoke READ privileges to single a file or all files within a directory
+from a specified collaborator or Google Group.
 
 Response format is same as that of "/share" route.
 
 Revoke all access for the specified user:
 
-`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/revoke/aq-data?recipient=[recipientEmail]@gmail.com"`
+`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/revoke/?recipient=[recipient]@gmail.com"`
 
-Or a sub-folder, e.g. "aq-data/test”:
+Share a sub-directory, e.g. "testfolder”:
 
-`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/revoke/aq-data/test?recipient=[recipientEmail]@gmail.com"`
+`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/revoke/testfolder?recipient=[recipient]@gmail.com"`
 
-Or a file, e.g. "data/folder/test/test1.txt”:
+Share a single file, e.g. "data/folder/test1.txt”:
 
-`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/revoke/aq-data/test/test1.txt?recipient=[recipientEmail]@gmail.com"`
+`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/revoke/data/folder/test1.txt?recipient=[recipient]@gmail.com"`
