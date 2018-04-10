@@ -43,7 +43,7 @@ const DATA_PREFIX = 'aq-data'; // 'Prefix by which to filter, e.g. public/';
 const DATA_PREFIX_REGEX = new RegExp("^(" + DATA_PREFIX + "/)");
 const ROLE_OBJECT_LISTER = 'projects/glowing-palace-179100/roles/storage.objectLister';
 const ROLE_COLLABORATOR = 'projects/glowing-palace-179100/roles/storage.collaborator';
-const UPLOAD_SIZE_LIMIT = 10 * 1024 * 1024; // no larger than 10mb
+const UPLOAD_SIZE_LIMIT = 25 * 1024 * 1024; // no larger than 25 MB
 const UPLOAD_DELIMITER = '\t';
 const FILENAME_DELIMITER_SUB = ':';
 const REGEX_NUMERIC = /^[0-9]+$/;
@@ -178,72 +178,83 @@ var upload = multer({
 app.post("/upload/:bucketName/*", authenticate, getBucketName,
 upload.single("file"), getFileName, async (req, res) => {
   var bucketName = req.bucketName;
+  // Current implementation requires that the bucket containing the item matches
+  // the bucket associated with the sharer's email. Future implementations
+  // may allow people to share objects in other buckets, if given permission
+  // by the bucket owner.
+  if(bucketName != gcb.getHash(req.email)) {
+    res.status(404).json({
+      success: false,
+      msg: "You may only share objects contained within your own bucket."
+    });
+  };
+
   var filename = req.filename;
 
-  // Set up first portion of pipe (csvParser) to check headers
-  var csvHeaderChecker = new csvParser({separator: UPLOAD_DELIMITER});
-  csvHeaderChecker.on('headers', function(headerList) {
-    var validHeader = requiredHeaders.every(val => headerList.indexOf(val) >= 0);
-    if (!validHeader) {
-      res.status(400).json({
-        success: false,
-        msg: 'Upload failed: Header does not contain required set of column names.',
-        requiredHeaders: requiredHeaders
-      });
-    } else {
-      csvValueChecker.end(req.file.buffer);
-    };
-  });
-
-  // Set up second portion of pipe to check values with regex
-  var csvValueChecker = new csvFast({headers: true, delimiter: UPLOAD_DELIMITER});
-  csvValueChecker
-    .validate( function(data, next) {
-      var validRow = true;
-
-      async.forEach(Object.keys(data), function(key, callback) {
-
-          var validEntry = data[key].match(REGEX_ANYTHING_GOES); // In the future, each column should have its own regex
-
-          // If any value is invalid, reject the entire file
-          if(!validEntry) {
-            var errMsg = 'Upload failed:\nInvalid entry for "' + key +
-              '" in row:\n' + JSON.stringify(data) + '\n';
-            console.log(errMsg);
-            res.status(400).json({
-              success: false,
-              error_key: key,
-              error_row: data
-            });
-            validRow = false;
-          };
-          callback();
-
-        }, function(err) {
-          if(err) {
-            console.error(err);
-          };
-          next(null, validRow)
-      });
-    })
-    .on('data-invalid', (data, index) => {
-      try {
-        blobStream.end( function() {
-          blob.delete()
-            .then(console.log("Attempted upload was deleted"))
-        });
-      } catch(e) {
-        console.log(e.message)
-      };
-    })
-    .on('data', data => {
-      // console.log(JSON.stringify(data));
-      blobStream.write(JSON.stringify(data));
-    })
-    .on('finish', () => {
-      console.log("Upload stream finished");
-      blobStream.end();
-    });
+  // // Set up first portion of pipe (csvParser) to check headers
+  // var csvHeaderChecker = new csvParser({separator: UPLOAD_DELIMITER});
+  // csvHeaderChecker.on('headers', function(headerList) {
+  //   var validHeader = requiredHeaders.every(val => headerList.indexOf(val) >= 0);
+  //   if (!validHeader) {
+  //     res.status(400).json({
+  //       success: false,
+  //       msg: 'Upload failed: Header does not contain required set of column names.',
+  //       requiredHeaders: requiredHeaders
+  //     });
+  //   } else {
+  //     csvValueChecker.end(req.file.buffer);
+  //   };
+  // });
+  //
+  // // Set up second portion of pipe to check values with regex
+  // var csvValueChecker = new csvFast({headers: true, delimiter: UPLOAD_DELIMITER});
+  // csvValueChecker
+  //   .validate( function(data, next) {
+  //     var validRow = true;
+  //
+  //     async.forEach(Object.keys(data), function(key, callback) {
+  //
+  //         var validEntry = data[key].match(REGEX_ANYTHING_GOES); // In the future, each column should have its own regex
+  //
+  //         // If any value is invalid, reject the entire file
+  //         if(!validEntry) {
+  //           var errMsg = 'Upload failed:\nInvalid entry for "' + key +
+  //             '" in row:\n' + JSON.stringify(data) + '\n';
+  //           console.log(errMsg);
+  //           res.status(400).json({
+  //             success: false,
+  //             error_key: key,
+  //             error_row: data
+  //           });
+  //           validRow = false;
+  //         };
+  //         callback();
+  //
+  //       }, function(err) {
+  //         if(err) {
+  //           console.error(err);
+  //         };
+  //         next(null, validRow)
+  //     });
+  //   })
+  //   .on('data-invalid', (data, index) => {
+  //     try {
+  //       blobStream.end( function() {
+  //         blob.delete()
+  //           .then(console.log("Attempted upload was deleted"))
+  //       });
+  //     } catch(e) {
+  //       console.log(e.message)
+  //     };
+  //   })
+  //   .on('data', data => {
+  //     // console.log(JSON.stringify(data));
+  //     blobStream.write(JSON.stringify(data));
+  //   })
+  //   .on('finish', () => {
+  //     console.log("Upload stream finished");
+  //     blobStream.end();
+  //   });
 
     // Set up writeStream (last portion of pipe) for upload to GCS
     const blob = storage
@@ -252,7 +263,7 @@ upload.single("file"), getFileName, async (req, res) => {
     const blobStream = blob.createWriteStream({
       metadata: {
         // contentType: req.file.mimetype
-        contentType: 'application/json'
+        // contentType: 'application/json'
       }
     });
     blobStream.on("error", err => {
@@ -268,7 +279,8 @@ upload.single("file"), getFileName, async (req, res) => {
     });
 
   // Send file through beginning of pipe
-  csvHeaderChecker.end(req.file.buffer);
+  // csvHeaderChecker.end(req.file.buffer);
+  blobStream.end(req.file.buffer);
 
   // req.originalDirectory = directory;
 });
@@ -308,6 +320,17 @@ app.get('/bucket-name', authenticate, function(req, res) {
 // Directory-listing workaround modified from https://github.com/googleapis/nodejs-storage/issues/26
 app.get('/list/:bucketName/*', authenticate, getBucketName, getDirectory, function(req, res) {
   var bucketName = req.bucketName;
+  // Current implementation requires that the bucket containing the item matches
+  // the bucket associated with the sharer's email. Future implementations
+  // may allow people to share objects in other buckets, if given permission
+  // by the bucket owner.
+  if(bucketName != gcb.getHash(req.email)) {
+    res.status(404).json({
+      success: false,
+      msg: "You may only share objects contained within your own bucket."
+    });
+  };
+
   var directory = req.directory;
 
   console.log("Bucket name: " + bucketName);
@@ -394,6 +417,17 @@ app.get('/list/:bucketName/*', authenticate, getBucketName, getDirectory, functi
 app.get('/share/:bucketName/*', authenticate, getBucketName, getSharedItem,
 function(req, res) {
   var bucketName = req.bucketName;
+  // Current implementation requires that the bucket containing the item matches
+  // the bucket associated with the sharer's email. Future implementations
+  // may allow people to share objects in other buckets, if given permission
+  // by the bucket owner.
+  if(bucketName != gcb.getHash(req.email)) {
+    res.status(404).json({
+      success: false,
+      msg: "You may only share objects contained within your own bucket."
+    });
+  };
+
   var recipientEmail = req.query.recipient;
   var sharedIsFile = req.sharedIsFile;
   var sharedItem = req.sharedItem;
@@ -429,7 +463,7 @@ function(req, res) {
   // Case 2 (out of 2): Shared item is a directory
   } else {
 
-    // Assign the given email to the ACL role of bucket object viewer
+    // Retrieve all files with prefix matching the [item] parameter
     storage
       .bucket(bucketName)
       .getFiles({prefix: sharedItem}) // only share files in the specified subdir
@@ -539,6 +573,17 @@ function(req, res) {
 app.get('/revoke/:bucketName/*', authenticate, getBucketName, getSharedItem,
 function(req, res) {
   var bucketName = req.bucketName;
+  // Current implementation requires that the bucket containing the item matches
+  // the bucket associated with the sharer's email. Future implementations
+  // may allow people to share objects in other buckets, if given permission
+  // by the bucket owner.
+  if(bucketName != gcb.getHash(req.email)) {
+    res.status(404).json({
+      success: false,
+      msg: "You may only share objects contained within your own bucket."
+    });
+  };
+
   var recipientEmail = req.query.recipient;
   var sharedIsFile = req.sharedIsFile;
   var sharedItem = req.sharedItem;
@@ -574,7 +619,7 @@ function(req, res) {
   // Case 2 (out of 2): Shared item is a directory
   } else {
 
-    // Assign the given email to the ACL role of bucket object viewer
+    // Retrieve all files with prefix matching the [item] parameter
     storage
       .bucket(bucketName)
       .getFiles({prefix: sharedItem}) // only share files in the specified subdir
@@ -698,24 +743,35 @@ function(req, res) {
 app.get('/download/:bucketName/*', authenticate, getBucketName, getFileName,
 function(req, res) {
   var bucketName = req.bucketName;
+  // Current implementation requires that the bucket containing the item matches
+  // the bucket associated with the sharer's email. Future implementations
+  // may allow people to share objects in other buckets, if given permission
+  // by the bucket owner.
+  if(bucketName != gcb.getHash(req.email)) {
+    res.status(404).json({
+      success: false,
+      msg: "You may only share objects contained within your own bucket."
+    });
+  };
+
   var filename = req.filename;
 
   // console.log("Download from bucket " + bucketName);
   // console.log("Download file: " + filename)
 
-  res.setHeader('Content-disposition', 'attachment; filename=' + filepath);
+  res.setHeader('Content-disposition', 'attachment; filename=' + filename);
 
   var file = storage
     .bucket(bucketName)
     .file(filename)
 
-  file
-    .getMetadata()
-    .then(results => {
-      const metadata = results[0];
-      const mimetype = metadata.contentType;
-      res.setHeader('Content-type', mimetype);
-    });
+  // file
+  //   .getMetadata()
+  //   .then(results => {
+  //     const metadata = results[0];
+  //     const mimetype = metadata.contentType;
+  //     res.setHeader('Content-type', mimetype);
+  //   });
 
   file
     .createReadStream()
@@ -1036,7 +1092,7 @@ function getFileName(req, res, next) {
 };
 
 // Extract file name or directory name from query parameters for sharing
-// and revoking
+// and revoking, and identifies whether item is file or directory.
 function getSharedItem(req, res, next) {
   var param = req.params[0];
   var prefixedParam = DATA_PREFIX + '/' + param;
