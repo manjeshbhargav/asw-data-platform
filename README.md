@@ -1,19 +1,31 @@
-## ASW Data Platform API Documentation
+# ASW Data Platform API Documentation
 Kenneth Qin for Environmental Defense Fund, 2018.
 
 Last updated on 13 April 2018.
 
-### /list
+--------------
+
+## Table of Contents
+
+1. [/list](#/list)
+2. [/upload](#/upload)
+3. [/download](#/download)
+4. [/share](#/share)
+5. [/revoke](#/revoke)
+
+--------------
+
+## /list
 
 Lists all files and subdirectories* within a specified directory of your bucket.
 
 *"Subdirectories"/”folders” refers to the substrings of object names preceding the ‘/’ delimiter within the specified directory; for example, a directory containing the objects a/file1.txt, b/file10.txt and b/file20.txt contains the subdirectories a/ and b/.
 
-#### HTTP request URI
+### HTTP request URI
 
 `GET https://glowing-palace-179100.appspot.com/list/[bucket]/[directory]`
 
-#### Parameters
+### Parameters
 
 | Parameter name | Parameter type | Value | Description |
 | ----- | ----- | ----- | ----- |
@@ -21,19 +33,19 @@ Lists all files and subdirectories* within a specified directory of your bucket.
 | `directory` | `path` | `string` | Filter results to objects whose names begin with this prefix. If left blank, does not filter results. |
 
 
-#### Request header
+### Request header
 
 `Authorization: Bearer [JWT]`
 
-#### Request body
+### Request body
 
 Do not supply a request body with this method.
 
-#### Example request via curl
+### Example request via curl
 
 `curl -H "Authorization: Bearer [JWT]" GET https://glowing-palace-179100.appspot.com/list/[bucket]/[directory]`
 
-#### Response
+### Response
 
 If successful, this method returns a response body with the following structure:
 
@@ -75,15 +87,15 @@ If successful, this method returns a response body with the following structure:
 }
 ```
 
-### /upload
+## /upload
 
 Upload a file to your bucket. Maximum upload size is 25 MB as of April 9, 2018.
 
-#### HTTP request URI
+### HTTP request URI
 
 `POST https://glowing-palace-179100.appspot.com/upload/[bucket]/[filename]`
 
-#### Parameters
+### Parameters
 
 | Parameter name | Parameter type | Value | Description |
 | ----- | ----- | ----- | ----- |
@@ -91,19 +103,19 @@ Upload a file to your bucket. Maximum upload size is 25 MB as of April 9, 2018.
 | `filename` | `path` | `string` | Filename including any prefix, i.e. the filepath. If left blank, defaults to original name of uploaded file. |
 
 
-#### Request header
+### Request header
 
 `Authorization: Bearer [JWT]`
 
-#### Request body
+### Request body
 
 `file=@/[path-to]/[file].txt`
 
-#### Example request via curl
+### Example request via curl
 
 `curl -H "Authorization: Bearer [JWT]" -F "file=@/[path-to]/[file].txt" https://glowing-palace-179100.appspot.com/upload/[bucket]/[filename]`
 
-#### Response
+### Response
 
 If successful, this method returns a response body with the following structure:
 
@@ -115,15 +127,15 @@ If successful, this method returns a response body with the following structure:
 }
 ```
 
-### /download
+## /download
 
 Download a file from your bucket to your local computer.
 
-#### HTTP request URI
+### HTTP request URI
 
 `POST https://glowing-palace-179100.appspot.com/download/[bucket]/[filename]`
 
-#### Parameters
+### Parameters
 
 | Parameter name | Parameter type | Value | Description |
 | ----- | ----- | ----- | ----- |
@@ -131,19 +143,19 @@ Download a file from your bucket to your local computer.
 | `filename` | `path` | `string` | Filename including any prefix, i.e. the filepath. |
 
 
-#### Request header
+### Request header
 
 `Authorization: Bearer [JWT]`
 
-#### Request body
+### Request body
 
 Do not supply a request body with this method.
 
-#### Example request via curl
+### Example request via curl
 
 `curl -H "Authorization: Bearer [JWT]" https://glowing-palace-179100.appspot.com/download/[bucket]/[filename]`
 
-#### Response
+### Response
 
 If successful, this method returns a read stream of the contents of the file. 
 
@@ -151,15 +163,15 @@ The stream can be piped to a local destination. For example, to write the conten
 
 `curl -H "Authorization: Bearer [JWT]" https://glowing-palace-179100.appspot.com/download/[bucket]/[filename] > [localdestination.txt]`
 
-### /share
+## /share
 
 Share a single file or all files within a directory with a specified collaborator or Google Group.
 
-#### HTTP request URI
+### HTTP request URI
 
 `GET https://glowing-palace-179100.appspot.com/share/[bucket]/[item]`
 
-#### Parameters
+### Parameters
 
 | Parameter name | Parameter type | Value | Description |
 | ----- | ----- | ----- | ----- |
@@ -168,19 +180,19 @@ Share a single file or all files within a directory with a specified collaborato
 | `recipient` | `query` | `string` | Gmail address with which to share access to the specified item. |
 
 
-#### Request header
+### Request header
 
 `Authorization: Bearer [JWT]`
 
-#### Request body
+### Request body
 
 Do not supply a request body with this method.
 
-#### Example request via curl
+### Example request via curl
 
 `curl -H "Authorization: Bearer [JWT]" https://glowing-palace-179100.appspot.com/share/[bucket]/[item]?recipient=[recipient]`
 
-#### Response
+### Response
 
 If successful, this method returns a response body with the following structure:
 
@@ -202,15 +214,15 @@ If successful, this method returns a response body with the following structure:
 }
 ```
 
-### /revoke
+## /revoke
 
 Revoke access from single file or all files within a directory with a specified collaborator or Google Group. 
 
-#### HTTP request URI
+### HTTP request URI
 
 `GET https://glowing-palace-179100.appspot.com/revoke/[bucket]/[item]`
 
-#### Parameters
+### Parameters
 
 | Parameter name | Parameter type | Value | Description |
 | ----- | ----- | ----- | ----- |
@@ -219,19 +231,19 @@ Revoke access from single file or all files within a directory with a specified 
 | `recipient` | `query` | `string` | Gmail address from which to revoke access to the specified item. |
 
 
-#### Request header
+### Request header
 
 `Authorization: Bearer [JWT]`
 
-#### Request body
+### Request body
 
 Do not supply a request body with this method.
 
-#### Example request via curl
+### Example request via curl
 
 `curl -H "Authorization: Bearer [JWT]" https://glowing-palace-179100.appspot.com/revoke/[bucket]/[item]?recipient=[recipient]`
 
-#### Response
+### Response
 
 If successful, this method returns a response body with the following structure:
 
