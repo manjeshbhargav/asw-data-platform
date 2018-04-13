@@ -36,7 +36,8 @@ const TEST_UPLOAD_FILENAME = process.env.TEST_UPLOAD_FILENAME || 'test-upload.tx
 const TEST_UPLOAD_FILENAME_JSON = 'test-upload.json';
 const JWT_SECRET = process.env.JWT_SECRET;
 const TOKEN_TIME = process.env.TOKEN_TIME || '168h';
-const JWT_FILENAME = 'jwt';
+const AUTH_LATENCY = process.env.AUTH_LATENCY || '750'; // milliseconds to delay responses to discourage brute-force attacks
+const JWT_FILENAME = 'jwt_donotshare';
 const PRIVATE_PREFIX = 'system';
 const DATA_PREFIX = 'aq-data'; // 'Prefix by which to filter, e.g. public/';
 const DATA_PREFIX_REGEX = new RegExp("^(" + DATA_PREFIX + "/)");
@@ -174,8 +175,8 @@ var upload = multer({
 
 // Create protected route to upload tab-delimited txt file and check that it
 // meets header requirements
-app.post("/upload/:bucketName/*", authenticate, getBucketName,
-upload.single("file"), getFileName, async (req, res) => {
+app.post("/upload/:bucketName/*", intentionalLatency, authenticate,
+getBucketName, upload.single("file"), getFileName, async (req, res) => {
   var bucketName = req.bucketName;
   // Current implementation requires that the bucket containing the item matches
   // the bucket associated with the sharer's email. Future implementations
@@ -317,7 +318,8 @@ app.get('/bucket-name', authenticate, function(req, res) {
 // directory
 // Modified from https://cloud.google.com/nodejs/docs/reference/storage/1.4.x/Bucket#getFiles
 // Directory-listing workaround modified from https://github.com/googleapis/nodejs-storage/issues/26
-app.get('/list/:bucketName/*', authenticate, getBucketName, getDirectory, function(req, res) {
+app.get('/list/:bucketName/*', intentionalLatency, authenticate, getBucketName,
+getDirectory, function(req, res) {
   var bucketName = req.bucketName;
   // Current implementation requires that the bucket containing the item matches
   // the bucket associated with the sharer's email. Future implementations
@@ -413,8 +415,8 @@ app.get('/list/:bucketName/*', authenticate, getBucketName, getDirectory, functi
 // specified other user
 // Modified from https://cloud.google.com/nodejs/docs/reference/storage/1.4.x/Acl#readers
 // and https://cloud.google.com/nodejs/docs/reference/storage/1.4.x/Iam
-app.get('/share/:bucketName/*', authenticate, getBucketName, getSharedItem,
-function(req, res) {
+app.get('/share/:bucketName/*', intentionalLatency, authenticate, getBucketName,
+getSharedItem, function(req, res) {
   var bucketName = req.bucketName;
   // Current implementation requires that the bucket containing the item matches
   // the bucket associated with the sharer's email. Future implementations
@@ -569,8 +571,8 @@ function(req, res) {
 // Revoke access to all files in a given subdirectory from a specified other user
 // Modified from https://cloud.google.com/nodejs/docs/reference/storage/1.4.x/Acl#readers
 // and https://cloud.google.com/nodejs/docs/reference/storage/1.4.x/Iam
-app.get('/revoke/:bucketName/*', authenticate, getBucketName, getSharedItem,
-function(req, res) {
+app.get('/revoke/:bucketName/*', intentionalLatency, authenticate,
+getBucketName, getSharedItem, function(req, res) {
   var bucketName = req.bucketName;
   // Current implementation requires that the bucket containing the item matches
   // the bucket associated with the sharer's email. Future implementations
@@ -739,8 +741,8 @@ function(req, res) {
 
 // Create protected route to download file
 // Response header from this thread https://stackoverflow.com/questions/7288814/download-a-file-from-nodejs-server-using-express
-app.get('/download/:bucketName/*', authenticate, getBucketName, getFileName,
-function(req, res) {
+app.get('/download/:bucketName/*', intentionalLatency, authenticate,
+getBucketName, getFileName, function(req, res) {
   var bucketName = req.bucketName;
   // Current implementation requires that the bucket containing the item matches
   // the bucket associated with the sharer's email. Future implementations
@@ -794,6 +796,12 @@ function(req, res) {
 //////////////////////
 // helper functions //
 //////////////////////
+
+// Set intentional latency, intended to discourage brute-force attacks on
+// JWT authentication
+function intentionalLatency(req, res, next) {
+  setTimeout(next, AUTH_LATENCY);
+};
 
 function serialize(req, res, next) {
   req.user = {
