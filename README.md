@@ -7,11 +7,11 @@ Last updated on 13 April 2018.
 
 ## Table of Contents
 
-1. [/list](#/list)
-2. [/upload](#/upload)
-3. [/download](#/download)
-4. [/share](#/share)
-5. [/revoke](#/revoke)
+1. [/list](#list)
+2. [/upload](#upload)
+3. [/download](#download)
+4. [/share](#share)
+5. [/revoke](#revoke)
 
 --------------
 
