@@ -1,54 +1,51 @@
+## ASW Data Platform API Documentation
+Kenneth Qin for Environmental Defense Fund, 2018.
 
-ASW Data Platform API
-=================
+Last updated on 13 April 2018.
 
-Kenneth Qin for Environmental Defense Fund, 2018
+### /list
 
-## Authentication by JSON Web Token
+Lists all files and subdirectories* within a specified directory of your bucket.
 
-All calls require authentication via a JSON Web Token (JWT),
-which can be retrieved by first authenticating via the browser at the
-application website, e.g. glowing-palace-179100.appspot.com, and then
-navigating to the file "system/jwt".
+*"Subdirectories"/”folders” refers to the substrings of object names preceding the ‘/’ delimiter within the specified directory; for example, a directory containing the objects a/file1.txt, b/file10.txt and b/file20.txt contains the subdirectories a/ and b/.
 
-Example JWT (for demonstrating what a JWT looks like; will return Unauthorized error)
+#### HTTP request URI
 
-`curl -H "Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJPbmxpbmUgSldUIEJ1aWxkZXIiLCJpYXQiOjE1MTYxNDA1MjcsImV4cCI6MTU0NzY3NjUyNywiYXVkIjoiIiwic3ViIjoiIiwiaWQiOiI0MzIxNTA4MzI1OTEwOCIsImVtYWlsIjoidGVzdDEyM0BnbWFpbC5jb20ifQ.TGZeNm0p-V6229tuiXxZtT_W4SMjm3CX31s4KHeqKZo" "https://glowing-palace-179100.appspot.com/authcheck"`
+`GET https://glowing-palace-179100.appspot.com/list/[bucket]/[directory]`
 
-## Get bucket name
+#### Parameters
 
-Get the bucket name and email associated with your JWT.
+| Parameter name | Parameter type | Value | Description |
+| ----- | ----- | ----- | ----- |
+| `bucket` | `path` | `string` | Name of bucket in which to look for objects. |
+| `directory` | `path` | `string` | Filter results to objects whose names begin with this prefix. If left blank, does not filter results. |
 
-`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/bucket-name"`
 
-Response:
+#### Request header
 
-```
-{
-  "email": [yourEmail],
-  "bucket": [bucketName]
-}
-```
+`Authorization: Bearer [JWT]`
 
-## Listing files
+#### Request body
 
-List files and subdirectories within a specified directory of a specified bucket.
+Do not supply a request body with this method.
 
-If no directory is specified, uses the `aq-data/` directory.
+#### Example request via curl
 
-`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/list/[bucketName]"`
+`curl -H "Authorization: Bearer [JWT]" GET https://glowing-palace-179100.appspot.com/list/[bucket]/[directory]`
 
-Response:
+#### Response
+
+If successful, this method returns a response body with the following structure:
 
 ```
 {
   "success": true,
-  "bucket": [bucketName]
+  "bucket": [bucketName],
   "directory": "",
   "results": {
     "directories": [
-      "testfolder",
-      "folder1"
+      "test",
+      "directory1"
     ],
     "files": [
       {
@@ -72,109 +69,131 @@ Response:
           "etag": "COSAzZnwgtgCEAY="
         }
       },
-
       ...
-
     ]
-
   }
 }
 ```
 
-List only files within a specified directory, e.g. "testfolder"
+### /upload
 
-`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/list/[bucketName]?directory=testfolder"`
+Upload a file to your bucket. Maximum upload size is 25 MB as of April 9, 2018.
+
+#### HTTP request URI
+
+`POST https://glowing-palace-179100.appspot.com/upload/[bucket]/[filename]`
+
+#### Parameters
+
+| Parameter name | Parameter type | Value | Description |
+| ----- | ----- | ----- | ----- |
+| `bucket` | `path` | `string` | Name of bucket in which to save file. |
+| `filename` | `path` | `string` | Filename including any prefix, i.e. the filepath. If left blank, defaults to original name of uploaded file. |
 
 
-## Uploading files
+#### Request header
 
-Upload a tab-delimited .txt file to your project folder, and convert it into a JSON file.
+`Authorization: Bearer [JWT]`
 
-Note: Upload file must be tab-delimited and have valid header (i.e. first column), or else it will be rejected.
+#### Request body
 
-`curl -H "Authorization: Bearer [JWT]" -F "file=@/Users/[me]/[path-to]/[file].txt" "https://glowing-palace-179100.appspot.com/upload/[filename].txt"`
+`file=@/[path-to]/[file].txt`
 
-Response for successful upload:
+#### Example request via curl
+
+`curl -H "Authorization: Bearer [JWT]" -F "file=@/[path-to]/[file].txt" https://glowing-palace-179100.appspot.com/upload/[bucket]/[filename]`
+
+#### Response
+
+If successful, this method returns a response body with the following structure:
 
 ```
 {
   "success": true,
+  "bucket": [bucketName],
   "filename": "[filename].txt"
 }
 ```
 
-Response for failed upload due to invalid header:
+### /download
 
-```
-{
-  "success": false,
-  "msg": 'Upload failed: Header does not contain required set of column names.',
-}
-```
+Download a file from your bucket to your local computer.
 
-In future updates, upload method will also check to make sure that values are all valid. If not, responds with failed upload. Suppose, for instance, that all values are required to be numeric:
+#### HTTP request URI
 
-```
-{
-  "success": false,
-  "error_key": "measurement_longitude_degree_decimal",
-  "error_row": {
-    "measurement_timestamp_epoch":"4",
-    "measurement_latitude_degree_decimal":"5",
-    "measurement_longitude_degree_decimal":"lol",
-    "measurand_name":"7","measured_value":"8",
-    "measurement_unit":"9","sampling_rate":"10",
-    "data_averaging_method":"11",
-    "sensor_mobility_type":"12",
-    "sensor_manufacturer":"13",
-    "sensor_model_name":"14"
-  }
-}
-```
+`POST https://glowing-palace-179100.appspot.com/download/[bucket]/[filename]`
 
-## Downloading files
+#### Parameters
 
-Download a file from your bucket to a local destination.
-
-`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/download/[bucketName]/[filename]"`
-
-For example, consider this request:
-
-`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/download/[bucketName]/alice.txt"`
-
-Response:
-
-```
-Alice was beginning to get very tired of sitting by her sister on the bank, and of having nothing to do
-...
-```
-
-To save this to a local file, simply pipe the output to a local destination:
-
-`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/download/[bucketName]/alice.txt" > [my/localpath/file.txt]`
+| Parameter name | Parameter type | Value | Description |
+| ----- | ----- | ----- | ----- |
+| `bucket` | `path` | `string` | Name of bucket in which to locate file. |
+| `filename` | `path` | `string` | Filename including any prefix, i.e. the filepath. |
 
 
-## Sharing files
+#### Request header
 
-Share a single file or all files within a directory
-with a specified collaborator or Google Group.
+`Authorization: Bearer [JWT]`
 
-`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/share/[bucketName]/[directoryOrFile]?recipient=[recipient]@gmail.com"`
+#### Request body
 
-Note: `recipient` parameter *must* be a Gmail address.
+Do not supply a request body with this method.
 
-Response if sharing is successful:
+#### Example request via curl
+
+`curl -H "Authorization: Bearer [JWT]" https://glowing-palace-179100.appspot.com/download/[bucket]/[filename]`
+
+#### Response
+
+If successful, this method returns a read stream of the contents of the file. 
+
+The stream can be piped to a local destination. For example, to write the contents to a local file:
+
+`curl -H "Authorization: Bearer [JWT]" https://glowing-palace-179100.appspot.com/download/[bucket]/[filename] > [localdestination.txt]`
+
+### /share
+
+Share a single file or all files within a directory with a specified collaborator or Google Group.
+
+#### HTTP request URI
+
+`GET https://glowing-palace-179100.appspot.com/share/[bucket]/[item]`
+
+#### Parameters
+
+| Parameter name | Parameter type | Value | Description |
+| ----- | ----- | ----- | ----- |
+| `bucket` | `path` | `string` | Name of bucket in which to locate file. |
+| `item` | `path` | `string` | Path to the item to be shared. The item can be a file or a directory. |
+| `recipient` | `query` | `string` | Gmail address with which to share access to the specified item. |
+
+
+#### Request header
+
+`Authorization: Bearer [JWT]`
+
+#### Request body
+
+Do not supply a request body with this method.
+
+#### Example request via curl
+
+`curl -H "Authorization: Bearer [JWT]" https://glowing-palace-179100.appspot.com/share/[bucket]/[item]?recipient=[recipient]`
+
+#### Response
+
+If successful, this method returns a response body with the following structure:
 
 ```
 {
   "success": true,
-  "recipient": "[recipient]@gmail.com",
-  "sharedItem": [sharedItem]
+  "recipient": "[recipient]",
+  "sharedItem": [item]
   "sharedIsFile": [true/false]
   "files": [
     {
       "name": "[filename]",
-      "url": "https://storage.cloud.google.com/[bucketName]/aq-data/[filename]"
+      "url": "https://storage.cloud.google.com/[bucket]/aq-data/[filename]"
     },
 
   ...
@@ -183,30 +202,53 @@ Response if sharing is successful:
 }
 ```
 
-Share a subdirectory, e.g. "testfolder”:
+### /revoke
 
-`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/share/testfolder?recipient=[recipient]@gmail.com"`
+Revoke access from single file or all files within a directory with a specified collaborator or Google Group. 
 
-Share a single file, e.g. "data/folder/test1.txt”:
+#### HTTP request URI
 
-`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/share/data/folder/test1.txt?recipient=[recipient]@gmail.com"`
+`GET https://glowing-palace-179100.appspot.com/revoke/[bucket]/[item]`
+
+#### Parameters
+
+| Parameter name | Parameter type | Value | Description |
+| ----- | ----- | ----- | ----- |
+| `bucket` | `path` | `string` | Name of bucket in which to locate file. |
+| `item` | `path` | `string` | Path to the item to be revoked from access. The item can be a file or a directory. |
+| `recipient` | `query` | `string` | Gmail address from which to revoke access to the specified item. |
 
 
-## Revoke access privileges
+#### Request header
 
-Revoke READ privileges to single a file or all files within a directory
-from a specified collaborator or Google Group.
+`Authorization: Bearer [JWT]`
 
-Response format is same as that of "/share" route.
+#### Request body
 
-Revoke all access for the specified user:
+Do not supply a request body with this method.
 
-`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/revoke/?recipient=[recipient]@gmail.com"`
+#### Example request via curl
 
-Share a sub-directory, e.g. "testfolder”:
+`curl -H "Authorization: Bearer [JWT]" https://glowing-palace-179100.appspot.com/revoke/[bucket]/[item]?recipient=[recipient]`
 
-`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/revoke/testfolder?recipient=[recipient]@gmail.com"`
+#### Response
 
-Share a single file, e.g. "data/folder/test1.txt”:
+If successful, this method returns a response body with the following structure:
 
-`curl -H "Authorization: Bearer [JWT]" "https://glowing-palace-179100.appspot.com/revoke/data/folder/test1.txt?recipient=[recipient]@gmail.com"`
+```
+{
+  "success": true,
+  "recipient": "[recipient]",
+  "sharedItem": [item]
+  "sharedIsFile": [true/false]
+  "files": [
+    {
+      "name": "[filename]",
+      "url": "https://storage.cloud.google.com/[bucket]/aq-data/[filename]"
+    },
+
+  ...
+
+  ]
+}
+```
