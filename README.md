@@ -1,19 +1,32 @@
 # ASW Data Platform API Documentation
 Kenneth Qin for Environmental Defense Fund, 2018.
 
-Last updated on 13 April 2018.
+Last updated on 16 April 2018.
+
+Currently deployed at [https://glowing-palace-179100.appspot.com](https://glowing-palace-179100.appspot.com/).
 
 --------------
 
 ## Table of Contents
 
-1. [/list](#list)
-2. [/upload](#upload)
-3. [/download](#download)
-4. [/share](#share)
-5. [/revoke](#revoke)
+1. [Getting Started](#getting-started)
+2. [/list](#list)
+3. [/upload](#upload)
+4. [/download](#download)
+5. [/share](#share)
+6. [/revoke](#revoke)
 
 --------------
+
+## Getting Started
+
+All API calls are authenticated via JSON Web Token (JWT), which must be retrieved by first signing in via the browser at the application website, [https://glowing-palace-179100.appspot.com](https://glowing-palace-179100.appspot.com/), and then navigating to the file `system/jwt_donotshare`.
+
+Example JWT, for demonstrating what a JWT looks like:
+
+```
+eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJPbmxpbmUgSldUIEJ1aWxkZXIiLCJpYXQiOjE1MTYxNDA1MjcsImV4cCI6MTU0NzY3NjUyNywiYXVkIjoiIiwic3ViIjoiIiwiaWQiOiI0MzIxNTA4MzI1OTEwOCIsImVtYWlsIjoidGVzdDEyM0BnbWFpbC5jb20ifQ.TGZeNm0p-V6229tuiXxZtT_W4SMjm3CX31s4KHeqKZo
+```
 
 ## /list
 
@@ -43,7 +56,7 @@ Do not supply a request body with this method.
 
 ### Example request via curl
 
-`curl -H "Authorization: Bearer [JWT]" GET https://glowing-palace-179100.appspot.com/list/[bucket]/[directory]`
+`curl -H "Authorization: Bearer [JWT]" https://glowing-palace-179100.appspot.com/list/[bucket]/[directory]`
 
 ### Response
 
@@ -133,7 +146,7 @@ Download a file from your bucket to your local computer.
 
 ### HTTP request URI
 
-`POST https://glowing-palace-179100.appspot.com/download/[bucket]/[filename]`
+`GET https://glowing-palace-179100.appspot.com/download/[bucket]/[filename]`
 
 ### Parameters
 

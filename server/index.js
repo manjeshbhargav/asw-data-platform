@@ -53,10 +53,6 @@ const USER_DB_FILENAME = 'users.txt';
 const ERR_EXCEPTION_ACL_NOT_FOUND = 'ApiError: Not Found';
 const DIRECTORY_CONTENT_TYPE = "application/x-www-form-urlencoded;charset=UTF-8";
 
-// const REGEX_VALUECHECKER = {
-//
-// }
-
 // HTTP(S) server constants.
 const DOMAIN = process.env.DOMAIN || 'localhost:8080';
 const PORT = parseInt(process.env.PORT || '8080', 10);
@@ -97,7 +93,6 @@ passport.use(new GoogOAuth2Strategy({
 const app = express();
 const webAppPath = path.join(__dirname, '../build');
 app.use('/', express.static(webAppPath));
-// app.use('/', express.static(__dirname));
 
 // Setup express middlewares
 const sessionOptions = {
@@ -182,10 +177,10 @@ getBucketName, upload.single("file"), getFileName, async (req, res) => {
   // the bucket associated with the sharer's email. Future implementations
   // may allow people to share objects in other buckets, if given permission
   // by the bucket owner.
-  if(bucketName != gcb.getHash(req.email)) {
-    res.status(404).json({
+  if(bucketName != gcb.getHash(req.user.email)) {
+    return res.status(404).json({
       success: false,
-      msg: "You may only share objects contained within your own bucket."
+      msg: "You may only upload objects to your own bucket."
     });
   };
 
@@ -325,12 +320,15 @@ getDirectory, function(req, res) {
   // the bucket associated with the sharer's email. Future implementations
   // may allow people to share objects in other buckets, if given permission
   // by the bucket owner.
-  if(bucketName != gcb.getHash(req.email)) {
-    res.status(404).json({
-      success: false,
-      msg: "You may only share objects contained within your own bucket."
-    });
-  };
+  // if(bucketName != gcb.getHash(req.user.email)) {
+  //   // console.log(`Bucket name: ${bucketName}`);
+  //   // console.log(`Email: ${req.user.email}`);
+  //   // console.log(`Hash: ${gcb.getHash(req.user.email)}`);
+  //   return res.status(404).json({
+  //     success: false,
+  //     msg: "You may only list objects contained in your own bucket."
+  //   });
+  // };
 
   var directory = req.directory;
 
@@ -379,40 +377,103 @@ getDirectory, function(req, res) {
       } else {
         var i = 0;
         var fileList = [];
+
         files.forEach(file => { // There is no "end" event for forEach()
                                 // so we use a counter to determine "end" instead.
-          // Filter out directories
-          if(file.metadata.contentType != DIRECTORY_CONTENT_TYPE) {
-            fileList.push({
-              name: (file.name).replace(DATA_PREFIX_REGEX, ""),
-              metadata: file.metadata,
+            getFilesWithPermission(file, function(err, file) {
+              i = i + 1;
+              if(err) {
+                // No problem
+              } else {
+                fileList.push({
+                  name: (file.name).replace(DATA_PREFIX_REGEX, ""),
+                  metadata: file.metadata,
+                });
+              };
+              if (i === files.length) {
+                res.status(200).json({
+                  success: true,
+                  bucket: bucketName,
+                  directory: req.directoryDisplay,
+                  results: {
+                    directories: directoryList,
+                    files: fileList,
+                    filesLength: fileList.length //REMOVE THIS!!!!!!!!!!!
+                  }
+                });
+              };
             });
-          };
-
-          i = i + 1;
-        });
+        //   // Do not add if it is a directory
+        //   if(file.metadata.contentType != DIRECTORY_CONTENT_TYPE) {
+        //
+        //     // Do not add if user is not at least a READER
+        //     file.acl.get({entity: `user-${req.user.email}`}).then(results => {
+        //       var aclObject = results[0];
+        //       console.log(`File ${file.name}; role ${aclObject.role}`);
+        //
+        //       if(aclObject.role === 'READER' || aclObject.role === 'OWNER') {
+        //         console.log(`Adding file: ${file.name}`);
+        //         fileList.push({
+        //           name: (file.name).replace(DATA_PREFIX_REGEX, ""),
+        //           metadata: file.metadata,
+        //         });
+        //       };
+        //
+        //     })
+        //     .catch(err => {
+        //       console.error('ACL READING ERROR:', err);
+        //     });
+        //   };
+        //
+        //   i = i + 1;
+        // });
 
         // When counter increases to length of files in getFiles response,
         // then respond to client
-        if (i === files.length) {
-          res.status(200).json({
-            success: true,
-            bucket: bucketName,
-            directory: req.directoryDisplay,
-            results: {
-              directories: directoryList,
-              files: fileList
-            }
+        // if (i === files.length) {
+        //   res.status(200).json({
+        //     success: true,
+        //     bucket: bucketName,
+        //     directory: req.directoryDisplay,
+        //     results: {
+        //       directories: directoryList,
+        //       files: fileList
+        //     }
           });
-        };
+        // };
       };
+    };
+  };
+
+  async function getFilesWithPermission(file, callback) {
+    // Do not add if it is a directory
+    if(file.metadata.contentType != DIRECTORY_CONTENT_TYPE) {
+
+      // Do not add if user is not at least a READER
+      file.acl.get({entity: `user-${req.user.email}`}).then(results => {
+        var aclObject = results[0];
+        console.log(`File ${file.name}; role ${aclObject.role}`);
+
+        if(aclObject.role === 'READER' || aclObject.role === 'OWNER') {
+          console.log(`Adding file: ${file.name}`);
+          callback(null, file);
+          // fileList.push({
+          //   name: (file.name).replace(DATA_PREFIX_REGEX, ""),
+          //   metadata: file.metadata,
+          // });
+        };
+
+      })
+      .catch(err => {
+        console.error('ACL READING ERROR:', err);
+        callback(Error(err));
+      });
     };
   };
 });
 
-// TO DO: Create equivalent version for single file
-// Create protected route to share all files in a given directory with
-// specified other user
+// Create protected route to share single file or all files in a given
+// directory with specified other user.
 // Modified from https://cloud.google.com/nodejs/docs/reference/storage/1.4.x/Acl#readers
 // and https://cloud.google.com/nodejs/docs/reference/storage/1.4.x/Iam
 app.get('/share/:bucketName/*', intentionalLatency, authenticate, getBucketName,
@@ -422,10 +483,10 @@ getSharedItem, function(req, res) {
   // the bucket associated with the sharer's email. Future implementations
   // may allow people to share objects in other buckets, if given permission
   // by the bucket owner.
-  if(bucketName != gcb.getHash(req.email)) {
+  if(bucketName != gcb.getHash(req.user.email)) {
     res.status(404).json({
       success: false,
-      msg: "You may only share objects contained within your own bucket."
+      msg: "You may only share objects contained in your own bucket."
     });
   };
 
@@ -578,10 +639,10 @@ getBucketName, getSharedItem, function(req, res) {
   // the bucket associated with the sharer's email. Future implementations
   // may allow people to share objects in other buckets, if given permission
   // by the bucket owner.
-  if(bucketName != gcb.getHash(req.email)) {
-    res.status(404).json({
+  if(bucketName != gcb.getHash(req.user.email)) {
+    return res.status(404).json({
       success: false,
-      msg: "You may only share objects contained within your own bucket."
+      msg: "You may only revoke access to objects contained in your own bucket."
     });
   };
 
@@ -748,10 +809,10 @@ getBucketName, getFileName, function(req, res) {
   // the bucket associated with the sharer's email. Future implementations
   // may allow people to share objects in other buckets, if given permission
   // by the bucket owner.
-  if(bucketName != gcb.getHash(req.email)) {
-    res.status(404).json({
+  if(bucketName != gcb.getHash(req.user.email)) {
+    return res.status(404).json({
       success: false,
-      msg: "You may only share objects contained within your own bucket."
+      msg: "You may only download objects contained in your own bucket."
     });
   };
 
@@ -1145,6 +1206,11 @@ function getSharedItem(req, res, next) {
   };
 };
 
+async function checkItemACL(file, user, callback) {
+
+};
+
+
 // Function for upload method to get filename from query parameter,
 // or, if undefined, use file's original name.
 // Replaces '/' with FILENAME_DELIMITER_SUB
@@ -1314,7 +1380,7 @@ app.get('/list-acl/:bucketName', authenticate, getBucketName, getDirectory, func
       const files = results[0];
 
       if (files.length === 0) {
-        res.status(404).json({
+        return res.status(404).json({
           success: false,
           msg: "No files/directories found"
         })
@@ -1359,7 +1425,7 @@ app.get('/list-buckets', authenticate, function(req, res) {
 
       // Not sure if this would ever happen though
       if (buckets.length === 0) {
-        res.status(404).json({
+        return res.status(404).json({
           success: false,
           msg: "No buckets found"
         })
